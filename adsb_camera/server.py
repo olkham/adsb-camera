@@ -68,6 +68,29 @@ def create_app(core: AdsbCamera) -> FastAPI:
     def unfreeze():
         return core.unfreeze()
 
+    @api.post("/api/frames", summary="Save the current live frame (+ aircraft data) for later calibration")
+    def save_frame():
+        return core.save_frame()
+
+    @api.get("/api/frames", summary="List saved frames")
+    def list_frames():
+        return core.list_frames()
+
+    @api.get("/api/frames/{fid}/image.jpg", summary="A saved frame, full resolution, no overlay")
+    def frame_image(fid: str):
+        path = core.logstore.frame_path(fid)
+        if not os.path.exists(path):
+            raise HTTPException(404, "No such saved frame")
+        return FileResponse(path, media_type="image/jpeg", headers=NO_CACHE)
+
+    @api.post("/api/frames/{fid}/view", summary="Load a saved frame for calibration, like freezing")
+    def view_frame(fid: str):
+        return core.view_frame(fid)
+
+    @api.delete("/api/frames/{fid}")
+    def delete_frame(fid: str):
+        return core.delete_frame(fid)
+
     @api.post("/api/candidates", summary="Aircraft that could be at a clicked point")
     def candidates(x: float = Body(...), y: float = Body(...)):
         return core.candidates(x, y)

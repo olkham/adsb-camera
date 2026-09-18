@@ -58,6 +58,12 @@ autodetect:             # experimental; toggle in the UI
   max_points: 200
   resolve_every_s: 60
 
+logbook:                # save frames (+ aircraft data) to calibrate from later
+  enabled: false        # auto-log frames around FOV-entry events; toggle in the UI
+  interval_s: 1
+  window_s: 5           # +/- this many seconds around a track entering the FOV
+  max_auto_frames: 300  # oldest auto-logged frames are pruned beyond this
+
 server:
   host: 0.0.0.0
   port: 8090

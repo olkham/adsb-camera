@@ -9,6 +9,7 @@ import math
 import os
 import threading
 import time
+from collections import deque
 from dataclasses import asdict
 from typing import Optional
 
@@ -20,6 +21,7 @@ from .autodetect import AutoRefiner
 from .calibration import (CalibrationStore, Correspondence, Site, SolveOptions, evaluate,
                           predict, solve, trim_fixes)
 from .camera_model import MODELS, CameraModel
+from .logbook import LogStore
 from .overlay import draw_aircraft, draw_grid, draw_hud, draw_points, placeholder
 from .scene import compute_scene, fov_outline, sky_grid
 from .video import VideoSource
@@ -56,6 +58,17 @@ class AdsbCamera:
                            "lock_intrinsics": False, "auto_solve": True, **st.get("solve", {})}
         self.max_range_km = float(st.get("max_range_km", acfg["max_range_km"]))
         self.autodetect_enabled = bool(st.get("autodetect_enabled", cfg["autodetect"]["enabled"]))
+
+        lb = cfg["logbook"]
+        self.logstore = LogStore(os.path.join(cfg["data_dir"], "frames"), max_auto=int(lb["max_auto_frames"]))
+        self.autolog_enabled = bool(st.get("autolog_enabled", lb["enabled"]))
+        self._viewing_frame_id: Optional[str] = None
+        self._autolog_buffer: deque = deque()      # (t, frame) sampled every interval_s
+        self._autolog_last_buffer_t = 0.0
+        self._autolog_last_log_t = 0.0
+        self._autolog_active: dict = {}            # icao -> deadline (t) to keep logging until
+        self._autolog_in_view: dict = {}           # icao -> last in_view, to catch the transition
+        self._autolog_saved_ts: set = set()        # rounded frame times already saved, dedupe
 
         self.store = AircraftStore(acfg["altitude_source"], self.site.geoid_m,
                                    self.site.ellipsoid_alt, timeout_s=acfg["timeout_s"])
@@ -122,7 +135,8 @@ class AdsbCamera:
         try:
             self.calib_store.save(self.site, self.camera, self.points, {
                 "overlay": self.overlay, "solve": self.solve_opts,
-                "max_range_km": self.max_range_km, "autodetect_enabled": self.autodetect_enabled})
+                "max_range_km": self.max_range_km, "autodetect_enabled": self.autodetect_enabled,
+                "autolog_enabled": self.autolog_enabled})
         except OSError as e:
             log.error("Could not save calibration: %s", e)
 
@@ -195,6 +209,9 @@ class AdsbCamera:
                 and math.isfinite(cam.rms_px) and cam.rms_px < 10):
             self._autodetect(frame, t, scene)
 
+        if self.autolog_enabled and not frozen and frame_enu is not None:
+            self._autolog(frame, t, scene)
+
         if not want_image or (frozen and version == self._rendered_version):
             return
         self._rendered_version = version if frozen else -1
@@ -266,6 +283,54 @@ class AdsbCamera:
             self._auto_since_solve = 0
             threading.Thread(target=self.run_solve, daemon=True).start()
 
+    # ── auto-log: save frames around aircraft entering the FOV ───────────
+    def _autolog(self, frame, t, scene):
+        cfg = self.cfg["logbook"]
+        interval, window = float(cfg["interval_s"]), float(cfg["window_s"])
+
+        # Keep a rolling buffer so an entry can be logged a few seconds "before" it happened.
+        buf = self._autolog_buffer
+        if t - self._autolog_last_buffer_t >= interval:
+            self._autolog_last_buffer_t = t
+            buf.append((t, frame.copy()))
+            cutoff = t - window - interval
+            while buf and buf[0][0] < cutoff:
+                buf.popleft()
+
+        entered = []
+        seen = set()
+        for a in scene:
+            icao = a["icao"]
+            seen.add(icao)
+            was_in_view = self._autolog_in_view.get(icao, False)
+            if a["in_view"] and not was_in_view:
+                entered.append(icao)
+                self._autolog_active[icao] = t + window
+            self._autolog_in_view[icao] = a["in_view"]
+        for icao in list(self._autolog_in_view):
+            if icao not in seen:
+                self._autolog_in_view.pop(icao, None)
+
+        if entered:
+            for bt, bframe in list(buf):
+                key = round(bt, 1)
+                if key in self._autolog_saved_ts:
+                    continue
+                self._autolog_saved_ts.add(key)
+                self.logstore.add(bframe, bt, self.store.snapshot(since=bt - 150),
+                                  source="auto", reason="entering view")
+
+        self._autolog_active = {k: v for k, v in self._autolog_active.items() if v >= t}
+        if self._autolog_active and t - self._autolog_last_log_t >= interval:
+            self._autolog_last_log_t = t   # advance regardless of dedup, to keep a steady cadence
+            key = round(t, 1)
+            if key not in self._autolog_saved_ts:
+                self._autolog_saved_ts.add(key)
+                self.logstore.add(frame.copy(), t, self.store.snapshot(since=t - 150),
+                                  source="auto", reason="entering view")
+        if len(self._autolog_saved_ts) > 4096:
+            self._autolog_saved_ts = set(sorted(self._autolog_saved_ts)[-2048:])
+
     # ── freeze / points ───────────────────────────────────────────────────
     def freeze(self) -> dict:
         frame, t, _ = self.video.latest()
@@ -273,14 +338,52 @@ class AdsbCamera:
             return {"ok": False, "message": "No video frame yet."}
         with self.lock:
             self.frozen = {"frame": frame.copy(), "t": t, "snapshot": self.store.snapshot()}
+            self._viewing_frame_id = None
             self.version += 1
         return {"ok": True, "t": t}
 
     def unfreeze(self):
         with self.lock:
             self.frozen = None
+            self._viewing_frame_id = None
             self.version += 1
         return {"ok": True}
+
+    # ── saved frames (manual + auto-logged) ───────────────────────────────
+    def save_frame(self) -> dict:
+        frame, t, _ = self.video.latest()
+        if frame is None:
+            return {"ok": False, "message": "No video frame yet."}
+        entry = self.logstore.add(frame, t, self.store.snapshot(since=t - 150),
+                                  source="manual", reason="manual")
+        return {"ok": True, "id": entry["id"], "t": t}
+
+    def list_frames(self) -> dict:
+        with self.lock:
+            viewing = self._viewing_frame_id
+        return {"ok": True, "items": self.logstore.list(), "viewing": viewing}
+
+    def view_frame(self, fid: str) -> dict:
+        full = self.logstore.get_full(fid)
+        if not full:
+            return {"ok": False, "message": "No such saved frame."}
+        img = self.logstore.load_image(fid)
+        if img is None:
+            return {"ok": False, "message": "Saved frame image is missing."}
+        with self.lock:
+            self.frozen = {"frame": img, "t": full["t"], "snapshot": full["snapshot"]}
+            self._viewing_frame_id = fid
+            self.version += 1
+        return {"ok": True, "t": full["t"]}
+
+    def delete_frame(self, fid: str) -> dict:
+        removed = self.logstore.delete(fid)
+        with self.lock:
+            if self._viewing_frame_id == fid:
+                self.frozen = None
+                self._viewing_frame_id = None
+                self.version += 1
+        return {"ok": removed}
 
     def frozen_jpeg(self) -> Optional[bytes]:
         with self.lock:
@@ -499,6 +602,8 @@ class AdsbCamera:
                 self.max_range_km = max(1.0, float(d["max_range_km"]))
             if "autodetect" in d:
                 self.autodetect_enabled = bool(d["autodetect"])
+            if "autolog" in d:
+                self.autolog_enabled = bool(d["autolog"])
             self._changed()
         return {"ok": True}
 
@@ -511,8 +616,10 @@ class AdsbCamera:
             for p in pts:
                 p["outlier"] = p["id"] in outliers
             settings = {"overlay": dict(self.overlay), "solve": dict(self.solve_opts),
-                        "max_range_km": self.max_range_km, "autodetect": self.autodetect_enabled}
+                        "max_range_km": self.max_range_km, "autodetect": self.autodetect_enabled,
+                        "autolog": self.autolog_enabled}
             last_solve = dict(self.last_solve)
+            viewing_frame = self._viewing_frame_id
         aircraft = []
         for a in self.scene:
             aircraft.append({k: a[k] for k in ("icao", "callsign", "alt_ft", "on_ground", "gs_kt",
@@ -525,7 +632,8 @@ class AdsbCamera:
             "camera": cam.to_dict(), "site": asdict(site), "site_valid": site.valid,
             "fov_outline": fov_outline(cam), "points": pts, "last_solve": last_solve,
             "aircraft": aircraft, "frozen": bool(frozen),
-            "frozen_t": frozen["t"] if frozen else None, "settings": settings,
+            "frozen_t": frozen["t"] if frozen else None, "viewing_frame": viewing_frame,
+            "settings": settings,
             "video": {"connected": self.video.connected, "fps": round(self.video.fps, 1),
                       "source": self.video.describe(), "error": self.video.error,
                       "width": frame.shape[1] if frame is not None else None,

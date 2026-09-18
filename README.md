@@ -140,6 +140,20 @@ same.
 6. With **Solve after each new point** on (the default) the fit updates immediately.
 7. Resume, wait for aircraft elsewhere in the view, repeat.
 
+Aircraft often cross the frame faster than you can freeze and click, especially
+near the edges. Two ways around that:
+
+- **Save frame**: instead of freezing, saves the current frame and the
+  aircraft data behind it to disk. Live streaming carries on. Come back later
+  (even after the aircraft has gone), open **Saved frames**, press **View** on
+  one, and click its aircraft exactly as you would a frozen frame.
+- **Auto-log frames when aircraft enter view** (Overlay panel): watches for a
+  track entering the field of view and saves frames roughly once a second for
+  five seconds either side of that moment, so a good pass through the frame is
+  captured without you needing to catch it live. Review and click through them
+  from **Saved frames** whenever it's convenient; delete the ones you don't
+  need.
+
 Tips:
 
 - **Spread points out**: corners and edges constrain distortion; the centre
@@ -202,6 +216,11 @@ detection, projection round-trips):
 | GET | `/api/state` | Camera, aircraft (with pixel positions), points, status |
 | POST | `/api/freeze`, `/api/unfreeze` | Freeze / resume |
 | GET | `/frozen.jpg` | Frozen frame, full resolution, no overlay |
+| POST | `/api/frames` | Save the current frame (+ aircraft data) for later |
+| GET | `/api/frames` | List saved frames |
+| GET | `/api/frames/{id}/image.jpg` | A saved frame, full resolution, no overlay |
+| POST | `/api/frames/{id}/view` | Load a saved frame for calibration (like freezing) |
+| DELETE | `/api/frames/{id}` | Delete a saved frame |
 | POST | `/api/candidates` `{x, y}` | Aircraft that could be at a normalised click |
 | POST | `/api/points` `{x, y, icao}` or `{x, y, landmark:{lat,lon,alt_m,label}}` | Add a point |
 | PATCH/DELETE | `/api/points/{id}` | Enable/disable, delete |
@@ -242,6 +261,7 @@ adsb_camera/
   scene.py         aircraft → pixels, sky grid, FOV outline
   overlay.py       OpenCV drawing
   autodetect.py    experimental automatic point collection
+  logbook.py       saved frames for later calibration (manual + auto-log)
   app.py           orchestration, render loop
   server.py        FastAPI: UI, MJPEG, JSON API
   static/          web UI

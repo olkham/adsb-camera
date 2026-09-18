@@ -28,8 +28,10 @@
     <section class="panel" id="calibrate">
       <div class="row gap">
         <button id="btnFreeze" class="primary" title="Space">Freeze frame</button>
+        <button id="btnSave" title="Save this frame and its aircraft data to calibrate from later">Save frame</button>
         <button id="btnSolve" title="Fit the camera to the points">Solve</button>
       </div>
+      <p id="viewingMsg" class="solve-msg" hidden></p>
       <p id="solveMsg" class="solve-msg"></p>
       <ol id="points" class="points"></ol>
       <div class="row gap small-actions">
@@ -42,6 +44,12 @@
       <h2>Sky</h2>
       <canvas id="sky" width="340" height="340" aria-label="Aircraft positions by azimuth and elevation, with the camera's field of view"></canvas>
     </section>
+
+    <details class="panel" id="framesPanel">
+      <summary>Saved frames</summary>
+      <p class="fine">Save a frame while aircraft are visible, then come back later, view it and click the aircraft in it to add calibration points.</p>
+      <ol id="frames" class="points"></ol>
+    </details>
 
     <details class="panel" id="cameraPanel" open>
       <summary>Camera</summary>
@@ -98,6 +106,8 @@
       <label class="inline">Max range (km)<input id="maxRange" type="number" min="1" max="500" step="1"></label>
       <label class="check"><input type="checkbox" id="autodetect"> Add points automatically (experimental)</label>
       <p class="fine">Once calibrated to a few pixels, looks for aircraft near their predicted position and adds confirmed sightings.</p>
+      <label class="check"><input type="checkbox" id="autolog"> Auto-log frames when aircraft enter view</label>
+      <p class="fine">Saves frames from a few seconds either side of a track entering the field of view, to calibrate from later in Saved frames.</p>
     </details>
 
     <footer class="fine links">

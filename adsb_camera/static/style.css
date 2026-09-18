@@ -157,6 +157,7 @@ button:disabled { opacity: .5; cursor: default; }
   font-size: 14px;
 }
 .points li.off { color: var(--ink-2); }
+.points li.viewing { background: #e3e9f1; }
 .points .res { font-weight: 600; }
 .points .res.good { color: var(--green); }
 .points .res.fair { color: var(--amber); }

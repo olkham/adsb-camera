@@ -51,17 +51,26 @@
       `<span>${dot(cam.calibrated && cam.rms_px < 5, cam.calibrated)}${cam.calibrated ? `RMS ${fmt(cam.rms_px)} px` : "Uncalibrated"}</span>` +
       `<span>${inView} in view</span>`;
 
-    // Freeze state
+    // Freeze state (also covers browsing a saved frame, which reuses the same frozen view)
     const fb = $("btnFreeze");
-    fb.textContent = s.frozen ? "Resume live" : "Freeze frame";
+    fb.textContent = s.viewing_frame ? "Back to live" : s.frozen ? "Resume live" : "Freeze frame";
     fb.classList.toggle("active", s.frozen);
     viewer.classList.toggle("frozen", s.frozen);
     if (s.frozen && !frozenImg) loadFrozen();
     if (!s.frozen) { frozenImg = null; loupe.hidden = true; closePicker(); }
 
+    const vm = $("viewingMsg");
+    if (s.viewing_frame) {
+      vm.hidden = false;
+      vm.textContent = `Viewing a saved frame from ${new Date(s.frozen_t * 1000).toLocaleTimeString()}. Click aircraft to add calibration points.`;
+    } else {
+      vm.hidden = true;
+    }
+
     let hint;
     if (!s.site_valid) hint = "Set the camera location (Camera location panel) so aircraft can be placed in the sky.";
-    else if (!s.frozen && s.points.length < 2) hint = "Freeze the frame when you can see an aircraft, then click it to say which one it is. Two points give a first fit; spread 10–20 across the view for a full lens model.";
+    else if (s.viewing_frame) hint = "Click each visible aircraft and pick it from the list. Use the magnifier for precise clicks. \"Back to live\" or Space returns to the live view.";
+    else if (!s.frozen && s.points.length < 2) hint = "Freeze the frame when you can see an aircraft, then click it to say which one it is. Two points give a first fit; spread 10–20 across the view for a full lens model. Or save frames now and calibrate from them later.";
     else if (s.frozen) hint = "Click each visible aircraft and pick it from the list. Use the magnifier for precise clicks. Space resumes.";
     else hint = `${s.points.length} calibration points. Freeze again to add more, especially near the edges of the view.`;
     $("hint").textContent = hint;
@@ -106,6 +115,43 @@
     if (act === "del") await api("DELETE", `/api/points/${id}`);
     else if (act === "toggle") await api("PATCH", `/api/points/${id}`, { enabled: e.target.checked });
     else return;
+    refresh();
+  });
+
+  // ── saved frames ───────────────────────────────────────────────────────
+  function timeAgo(t) {
+    const s = Math.max(0, Date.now() / 1000 - t);
+    if (s < 60) return `${Math.round(s)}s ago`;
+    if (s < 3600) return `${Math.round(s / 60)}m ago`;
+    if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+    return new Date(t * 1000).toLocaleString();
+  }
+
+  async function refreshFrames() {
+    let r;
+    try { r = await api("GET", "/api/frames"); } catch (e) { return; }
+    const ol = $("frames");
+    if (!r.items.length) {
+      ol.innerHTML = `<li class="empty">No saved frames yet.</li>`;
+      return;
+    }
+    ol.innerHTML = r.items.map((f) => `
+      <li class="${f.id === r.viewing ? "viewing" : ""}" data-id="${f.id}">
+        <span class="tag">${f.source}</span>
+        <span>${timeAgo(f.t)}<span class="fine"> · ${f.n_aircraft} aircraft</span></span>
+        <button data-act="view">View</button>
+        <button class="x" data-act="del" aria-label="Delete saved frame">×</button></li>`).join("");
+  }
+  setInterval(refreshFrames, 5000);
+
+  $("frames").addEventListener("click", async (e) => {
+    const li = e.target.closest("li[data-id]");
+    if (!li) return;
+    const id = li.dataset.id, act = e.target.dataset.act;
+    if (act === "view") { const r = await api("POST", `/api/frames/${id}/view`); if (!r.ok) toast(r.message); }
+    else if (act === "del") await api("DELETE", `/api/frames/${id}`);
+    else return;
+    refreshFrames();
     refresh();
   });
 
@@ -158,6 +204,7 @@
     setIfIdle("optPos", !!st.solve.solve_position, "checked");
     setIfIdle("maxRange", st.max_range_km);
     setIfIdle("autodetect", !!st.autodetect, "checked");
+    setIfIdle("autolog", !!st.autolog, "checked");
   }
   document.querySelectorAll("[data-ov]").forEach((cb) =>
     cb.addEventListener("change", () => api("POST", "/api/settings", { overlay: { [cb.dataset.ov]: cb.checked } })));
@@ -170,6 +217,7 @@
   solveSetting("optPos", "solve_position", "checked");
   $("maxRange").addEventListener("change", (e) => api("POST", "/api/settings", { max_range_km: Number(e.target.value) }));
   $("autodetect").addEventListener("change", (e) => api("POST", "/api/settings", { autodetect: e.target.checked }));
+  $("autolog").addEventListener("change", (e) => api("POST", "/api/settings", { autolog: e.target.checked }));
 
   // ── site ───────────────────────────────────────────────────────────────
   const SITE = { siteLat: "lat", siteLon: "lon", siteAlt: "alt_m", siteGeoid: "geoid_m" };
@@ -196,6 +244,13 @@
     await refresh();
   }
   $("btnFreeze").addEventListener("click", toggleFreeze);
+  $("btnSave").addEventListener("click", async () => {
+    try {
+      await api("POST", "/api/frames");
+      toast("Frame saved");
+      refreshFrames();
+    } catch (e) { toast("Could not save frame"); }
+  });
   $("btnSolve").addEventListener("click", async () => {
     $("btnSolve").disabled = true;
     try { const r = await api("POST", "/api/solve", {}); toast(r.message); }
@@ -379,4 +434,5 @@
   }
 
   refresh();
+  refreshFrames();
 })();

@@ -70,6 +70,12 @@ DEFAULTS: dict = {
         "max_points": 200,
         "resolve_every_s": 60.0,
     },
+    "logbook": {          # save frames for later calibration, manually or automatically
+        "enabled": False,    # auto-log frames around FOV-entry events
+        "interval_s": 1.0,
+        "window_s": 5.0,     # +/- this many seconds around a track entering the FOV
+        "max_auto_frames": 300,
+    },
     "server": {
         "host": "0.0.0.0",
         "port": 8090,
