@@ -1,0 +1,27 @@
+# docker compose up -d   ->   http://<this-host>:8090
+# Optional: copy .env.example to .env to change the defaults below.
+services:
+  adsb-camera:
+    build: .
+    image: adsb-camera:latest
+    container_name: adsb-camera
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8090}:8090"
+    environment:
+      ADSBCAM__VIDEO__SOURCE: "${VIDEO_SOURCE:-rtsp://host.docker.internal:8554/video_main}"
+      ADSBCAM__MQTT__HOST: "${MQTT_HOST:-192.168.1.241}"
+      ADSBCAM__MQTT__PORT: "${MQTT_PORT:-1883}"
+      ADSBCAM__MQTT__PREFIX: "${MQTT_PREFIX:-adsb}"
+      ADSBCAM__SITE__LAT: "${SITE_LAT:-}"
+      ADSBCAM__SITE__LON: "${SITE_LON:-}"
+      ADSBCAM__SITE__ALT_M: "${SITE_ALT_M:-0}"
+      ADSBCAM__DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data          # calibration survives rebuilds
+      # - ./config.yaml:/app/config.yaml:ro   # optional full config (create the file first!)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # reach IPyCam running on this machine
+    # Local USB webcam on Linux instead of IPyCam (set VIDEO_SOURCE=0):
+    # devices:
+    #   - /dev/video0:/dev/video0

@@ -1,0 +1,69 @@
+# ADS-B Camera configuration. Copy to config.yaml (install scripts do this).
+# Every value can also be overridden with an environment variable
+#   ADSBCAM__<SECTION>__<KEY>   e.g. ADSBCAM__MQTT__HOST=192.168.1.241
+
+video:
+  # IPyCam main stream (RTSP, best latency):  rtsp://<ipycam-host>:8554/video_main
+  # IPyCam MJPEG fallback:                    http://<ipycam-host>:8080/stream.mjpeg
+  # Local webcam by index:                    0
+  source: "rtsp://127.0.0.1:8554/video_main"
+  rtsp_transport: tcp
+  reconnect_s: 3
+  # width: 1920      # only used for local webcam indexes
+  # height: 1080
+
+mqtt:
+  host: 192.168.1.241
+  port: 1883
+  prefix: adsb          # adsb2mqtt MQTT_TOPIC_PREFIX
+  username: ""
+  password: ""
+  tls: false
+
+site:
+  # Where the CAMERA is (not necessarily the ADS-B antenna). Can also be set
+  # in the web UI; UI changes are saved in data/calibration.json and win.
+  lat:                  # e.g. 51.4700
+  lon:                  # e.g. -0.4543
+  alt_m: 0              # camera height above mean sea level, metres
+  geoid_m: 47           # MSL -> WGS-84 ellipsoid offset (~46-48 m across England)
+
+aircraft:
+  altitude_source: auto # auto = GNSS (geometric) altitude, else barometric
+  max_range_km: 80
+  stale_s: 30           # stop drawing an aircraft this long after its last position
+  trail_s: 60
+
+camera:
+  # Starting guess until calibrated. For the Ximea 180° lens use:
+  #   model: fisheye, hfov_deg: 180, pitch_deg: 90 (if it looks straight up)
+  model: pinhole
+  hfov_deg: 70
+  yaw_deg: 0            # compass direction the camera faces
+  pitch_deg: 10         # degrees above the horizon
+  roll_deg: 0
+
+overlay:
+  labels: true
+  trails: true
+  grid: true
+  offscreen: true
+  points: false         # calibration points are always shown while frozen
+  hud: true
+
+autodetect:             # experimental; toggle in the UI
+  enabled: false
+  interval_s: 10
+  search_px: 45
+  max_points: 200
+  resolve_every_s: 60
+
+server:
+  host: 0.0.0.0
+  port: 8090
+  output_fps: 15
+  output_max_width: 1920
+  jpeg_quality: 80
+
+data_dir: data
+log_level: INFO

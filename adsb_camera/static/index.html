@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ADS-B Camera</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="layout">
+  <section class="viewer-col">
+    <div id="viewer" class="viewer" tabindex="0" aria-label="Camera view. Press space to freeze.">
+      <img id="stream" src="/stream.mjpeg" alt="Live camera with aircraft overlay" draggable="false">
+      <canvas id="loupe" class="loupe" width="200" height="200" hidden></canvas>
+      <div id="picker" class="picker" hidden role="dialog" aria-label="Which aircraft is this?"></div>
+    </div>
+    <p id="hint" class="hint"></p>
+  </section>
+
+  <aside class="side">
+    <header class="brand">
+      <h1>ADS-B Camera</h1>
+      <div id="status" class="status" aria-live="polite"></div>
+    </header>
+
+    <section class="panel" id="calibrate">
+      <div class="row gap">
+        <button id="btnFreeze" class="primary" title="Space">Freeze frame</button>
+        <button id="btnSolve" title="Fit the camera to the points">Solve</button>
+      </div>
+      <p id="solveMsg" class="solve-msg"></p>
+      <ol id="points" class="points"></ol>
+      <div class="row gap small-actions">
+        <button id="btnClearAuto" class="quiet">Clear auto points</button>
+        <button id="btnClearAll" class="quiet danger">Clear all points</button>
+      </div>
+    </section>
+
+    <section class="panel sky-panel">
+      <h2>Sky</h2>
+      <canvas id="sky" width="340" height="340" aria-label="Aircraft positions by azimuth and elevation, with the camera's field of view"></canvas>
+    </section>
+
+    <details class="panel" id="cameraPanel" open>
+      <summary>Camera</summary>
+      <div class="sliders">
+        <label>Yaw <output id="o_yaw"></output><input type="range" id="s_yaw" min="0" max="360" step="0.1"></label>
+        <label>Pitch <output id="o_pitch"></output><input type="range" id="s_pitch" min="-90" max="90" step="0.1"></label>
+        <label>Roll <output id="o_roll"></output><input type="range" id="s_roll" min="-180" max="180" step="0.1"></label>
+        <label>Horizontal FOV <output id="o_hfov"></output><input type="range" id="s_hfov" min="5" max="240" step="0.1"></label>
+        <label>Sync offset <output id="o_sync"></output><input type="range" id="s_sync" min="-5" max="10" step="0.05"></label>
+      </div>
+      <div class="row gap">
+        <label class="inline">Lens
+          <select id="camModel"><option value="pinhole">Standard</option><option value="fisheye">Fisheye</option></select>
+        </label>
+        <button id="btnResetCam" class="quiet">Reset camera</button>
+      </div>
+      <p id="camInfo" class="fine"></p>
+    </details>
+
+    <details class="panel" id="sitePanel">
+      <summary>Camera location</summary>
+      <div class="grid2">
+        <label>Latitude<input id="siteLat" inputmode="decimal"></label>
+        <label>Longitude<input id="siteLon" inputmode="decimal"></label>
+        <label>Height above sea level (m)<input id="siteAlt" inputmode="decimal"></label>
+        <label>Geoid offset (m)<input id="siteGeoid" inputmode="decimal"></label>
+      </div>
+      <button id="btnSite">Save location</button>
+    </details>
+
+    <details class="panel">
+      <summary>Solver</summary>
+      <label class="inline">Lens model
+        <select id="optModel"><option value="auto">Pick automatically</option><option value="pinhole">Standard</option><option value="fisheye">Fisheye</option></select>
+      </label>
+      <label class="inline">Sync offset
+        <select id="optSync"><option value="auto">Fit when enough points</option><option value="on">Always fit</option><option value="off">Keep fixed</option></select>
+      </label>
+      <label class="check"><input type="checkbox" id="optAuto"> Solve after each new point</label>
+      <label class="check"><input type="checkbox" id="optLock"> Keep lens fixed, re-aim only</label>
+      <label class="check"><input type="checkbox" id="optPos"> Refine camera location (15+ points)</label>
+    </details>
+
+    <details class="panel">
+      <summary>Overlay</summary>
+      <div class="checks">
+        <label class="check"><input type="checkbox" data-ov="labels"> Labels</label>
+        <label class="check"><input type="checkbox" data-ov="trails"> Trails</label>
+        <label class="check"><input type="checkbox" data-ov="grid"> Sky grid</label>
+        <label class="check"><input type="checkbox" data-ov="offscreen"> Edge arrows</label>
+        <label class="check"><input type="checkbox" data-ov="points"> Calibration points</label>
+        <label class="check"><input type="checkbox" data-ov="hud"> Status line</label>
+      </div>
+      <label class="inline">Max range (km)<input id="maxRange" type="number" min="1" max="500" step="1"></label>
+      <label class="check"><input type="checkbox" id="autodetect"> Add points automatically (experimental)</label>
+      <p class="fine">Once calibrated to a few pixels, looks for aircraft near their predicted position and adds confirmed sightings.</p>
+    </details>
+
+    <footer class="fine links">
+      <a href="/stream.mjpeg" target="_blank">Stream</a>
+      <a href="/snapshot.jpg" target="_blank">Snapshot</a>
+      <a href="/api/calibration">Calibration file</a>
+      <a href="/api/docs" target="_blank">API</a>
+    </footer>
+  </aside>
+</main>
+<div id="toast" class="toast" role="status" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
