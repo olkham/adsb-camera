@@ -62,6 +62,8 @@ DEFAULTS: dict = {
         "offscreen": True,
         "points": False,        # always shown while frozen
         "hud": True,
+        "reticle": True,        # marker drawn on each in-view aircraft
+        "reticle_shape": "circle",   # circle | square | cross | triangle
     },
     "autodetect": {
         "enabled": False,

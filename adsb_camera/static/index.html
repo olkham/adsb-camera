@@ -116,7 +116,16 @@
         <label class="check"><input type="checkbox" data-ov="offscreen"> Edge arrows</label>
         <label class="check"><input type="checkbox" data-ov="points"> Calibration points</label>
         <label class="check"><input type="checkbox" data-ov="hud"> Status line</label>
+        <label class="check"><input type="checkbox" data-ov="reticle"> Reticle</label>
       </div>
+      <label class="inline">Reticle shape
+        <select id="reticleShape">
+          <option value="circle">Circle</option>
+          <option value="square">Square corners</option>
+          <option value="cross">Cross (+)</option>
+          <option value="triangle">Triangle</option>
+        </select>
+      </label>
       <label class="inline">Max range (km)<input id="maxRange" type="number" min="1" max="500" step="1"></label>
       <label class="check"><input type="checkbox" id="autodetect"> Add points automatically (experimental)</label>
       <p class="fine">Once calibrated to a few pixels, looks for aircraft near their predicted position and adds confirmed sightings.</p>

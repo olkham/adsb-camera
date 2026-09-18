@@ -22,7 +22,7 @@ from .calibration import (CalibrationStore, Correspondence, Site, SolveOptions, 
                           predict, solve, trim_fixes)
 from .camera_model import MODELS, CameraModel
 from .logbook import LogStore
-from .overlay import draw_aircraft, draw_grid, draw_hud, draw_points, placeholder
+from .overlay import RETICLE_SHAPES, draw_aircraft, draw_grid, draw_hud, draw_points, placeholder
 from .scene import compute_scene, fov_outline, sky_grid
 from .video import VideoSource
 
@@ -593,7 +593,10 @@ class AdsbCamera:
     def set_settings(self, d: dict) -> dict:
         with self.lock:
             for k, v in (d.get("overlay") or {}).items():
-                if k in self.overlay:
+                if k == "reticle_shape":
+                    if v in RETICLE_SHAPES:
+                        self.overlay[k] = v
+                elif k in self.overlay:
                     self.overlay[k] = bool(v)
             for k, v in (d.get("solve") or {}).items():
                 if k in self.solve_opts:

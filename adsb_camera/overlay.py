@@ -12,6 +12,41 @@ POINT_OBS = (90, 230, 90)
 POINT_PRED = (80, 80, 255)
 POINT_OFF = (150, 150, 150)
 
+RETICLE_SHAPES = ("circle", "square", "cross", "triangle")
+
+
+def _reticle_segments(shape: str, r: float):
+    """Line segments (dx, dy) around the origin for a reticle shape, or None for a plain circle."""
+    if shape == "square":  # camera-style corner brackets, not a full box
+        arm = r * 0.7
+        segs = []
+        for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+            segs.append(((sx * r, sy * r), (sx * r - sx * arm, sy * r)))
+            segs.append(((sx * r, sy * r), (sx * r, sy * r - sy * arm)))
+        return segs
+    if shape == "cross":  # gap in the middle so the target itself isn't covered
+        gap = r * 0.5
+        return [((dx * gap, dy * gap), (dx * r * 1.6, dy * r * 1.6))
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))]
+    if shape == "triangle":
+        pts = [(0, -r * 1.3), (-r * 1.15, r * 0.75), (r * 1.15, r * 0.75)]
+        return list(zip(pts, pts[1:] + pts[:1]))
+    return None  # "circle"
+
+
+def _draw_reticle(img, center, r, color, th, shape: str):
+    u, v = center
+    segs = _reticle_segments(shape, r)
+    if segs is None:
+        cv2.circle(img, (int(u), int(v)), r, (0, 0, 0), th + 2, cv2.LINE_AA)
+        cv2.circle(img, (int(u), int(v)), r, color, th, cv2.LINE_AA)
+        return
+    lines = [((int(u + ax), int(v + ay)), (int(u + bx), int(v + by))) for (ax, ay), (bx, by) in segs]
+    for p1, p2 in lines:
+        cv2.line(img, p1, p2, (0, 0, 0), th + 2, cv2.LINE_AA)
+    for p1, p2 in lines:
+        cv2.line(img, p1, p2, color, th, cv2.LINE_AA)
+
 
 def _bgr(rgb):
     return (int(rgb[2]), int(rgb[1]), int(rgb[0]))
@@ -104,12 +139,8 @@ def draw_aircraft(img, scene, s, ui, opts):
         if a["in_view"]:
             r = int(11 * ui)
             c = (int(u), int(v))
-            cv2.circle(img, c, r, (0, 0, 0), th + 2, cv2.LINE_AA)
-            cv2.circle(img, c, r, color, th, cv2.LINE_AA)
-            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                p1 = (int(u + dx * r * 1.4), int(v + dy * r * 1.4))
-                p2 = (int(u + dx * r * 2.1), int(v + dy * r * 2.1))
-                cv2.line(img, p1, p2, color, th, cv2.LINE_AA)
+            if opts.get("reticle", True):
+                _draw_reticle(img, c, r, color, th, opts.get("reticle_shape", "circle"))
             if not opts.get("labels"):
                 continue
             l1 = (a["callsign"] or a["icao"]) + _vrate_mark(a)

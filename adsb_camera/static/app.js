@@ -214,6 +214,7 @@
     setIfIdle("maxRange", st.max_range_km);
     setIfIdle("autodetect", !!st.autodetect, "checked");
     setIfIdle("autolog", !!st.autolog, "checked");
+    setIfIdle("reticleShape", st.overlay.reticle_shape);
   }
   document.querySelectorAll("[data-ov]").forEach((cb) =>
     cb.addEventListener("change", () => api("POST", "/api/settings", { overlay: { [cb.dataset.ov]: cb.checked } })));
@@ -227,6 +228,7 @@
   $("maxRange").addEventListener("change", (e) => api("POST", "/api/settings", { max_range_km: Number(e.target.value) }));
   $("autodetect").addEventListener("change", (e) => api("POST", "/api/settings", { autodetect: e.target.checked }));
   $("autolog").addEventListener("change", (e) => api("POST", "/api/settings", { autolog: e.target.checked }));
+  $("reticleShape").addEventListener("change", (e) => api("POST", "/api/settings", { overlay: { reticle_shape: e.target.value } }));
 
   // ── site ───────────────────────────────────────────────────────────────
   const SITE = { siteLat: "lat", siteLon: "lon", siteAlt: "alt_m", siteGeoid: "geoid_m" };
