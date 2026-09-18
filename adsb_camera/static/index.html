@@ -7,6 +7,13 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="/static/style.css">
+<script>
+  (function () {
+    var saved = localStorage.getItem("adsbcam-theme");
+    var dark = saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+  })();
+</script>
 </head>
 <body>
 <main class="layout">
@@ -21,8 +28,15 @@
 
   <aside class="side">
     <header class="brand">
-      <h1>ADS-B Camera</h1>
-      <div id="status" class="status" aria-live="polite"></div>
+      <div>
+        <h1>ADS-B Camera</h1>
+        <div id="status" class="status" aria-live="polite"></div>
+      </div>
+      <label class="switch" title="Dark mode">
+        <input type="checkbox" id="themeToggle">
+        <span class="track" aria-hidden="true"></span>
+        <span class="switch-label">Dark</span>
+      </label>
     </header>
 
     <section class="panel" id="calibrate">

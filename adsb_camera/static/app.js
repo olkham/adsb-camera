@@ -8,6 +8,15 @@
   let dragging = new Set();      // sliders currently being moved
   let formDirty = new Set();     // site inputs being edited
 
+  // ── theme ──────────────────────────────────────────────────────────────
+  const THEME_KEY = "adsbcam-theme";
+  $("themeToggle").checked = document.documentElement.dataset.theme === "dark";
+  $("themeToggle").addEventListener("change", (e) => {
+    const mode = e.target.checked ? "dark" : "light";
+    document.documentElement.dataset.theme = mode;
+    localStorage.setItem(THEME_KEY, mode);
+  });
+
   // ── api ────────────────────────────────────────────────────────────────
   async function api(method, url, body) {
     const r = await fetch(url, {
@@ -98,7 +107,7 @@
       const cls = r == null ? "" : r < 3 ? "good" : r < 10 ? "fair" : "bad";
       const tag = (p.source === "auto" ? `<span class="tag">auto</span>` : "") +
         (p.kind === "landmark" ? `<span class="tag">landmark</span>` : "") +
-        (p.outlier ? `<span class="tag" style="color:var(--magenta)">check this</span>` : "");
+        (p.outlier ? `<span class="tag" style="color:var(--darkred)">check this</span>` : "");
       return `<li class="${p.enabled ? "" : "off"}" data-id="${p.id}">
         <input type="checkbox" ${p.enabled ? "checked" : ""} aria-label="Use this point" data-act="toggle">
         <span>${escapeHtml(p.label || p.icao)}${tag}</span>
@@ -375,7 +384,7 @@
       return [c + r * Math.cos(a), c + r * Math.sin(a)];
     };
     const css_ = getComputedStyle(document.documentElement);
-    const MAG = css_.getPropertyValue("--magenta").trim(), INK = css_.getPropertyValue("--ink").trim();
+    const MAG = css_.getPropertyValue("--darkred").trim(), INK = css_.getPropertyValue("--ink").trim();
     const RULE = css_.getPropertyValue("--rule").trim();
 
     // elevation rings + spokes
