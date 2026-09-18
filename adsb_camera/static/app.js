@@ -8,6 +8,15 @@
   let dragging = new Set();      // sliders currently being moved
   let formDirty = new Set();     // site inputs being edited
 
+  // ── theme ──────────────────────────────────────────────────────────────
+  const THEME_KEY = "adsbcam-theme";
+  $("themeToggle").checked = document.documentElement.dataset.theme === "dark";
+  $("themeToggle").addEventListener("change", (e) => {
+    const mode = e.target.checked ? "dark" : "light";
+    document.documentElement.dataset.theme = mode;
+    localStorage.setItem(THEME_KEY, mode);
+  });
+
   // ── api ────────────────────────────────────────────────────────────────
   async function api(method, url, body) {
     const r = await fetch(url, {
@@ -98,7 +107,7 @@
       const cls = r == null ? "" : r < 3 ? "good" : r < 10 ? "fair" : "bad";
       const tag = (p.source === "auto" ? `<span class="tag">auto</span>` : "") +
         (p.kind === "landmark" ? `<span class="tag">landmark</span>` : "") +
-        (p.outlier ? `<span class="tag" style="color:var(--magenta)">check this</span>` : "");
+        (p.outlier ? `<span class="tag" style="color:var(--darkred)">check this</span>` : "");
       return `<li class="${p.enabled ? "" : "off"}" data-id="${p.id}">
         <input type="checkbox" ${p.enabled ? "checked" : ""} aria-label="Use this point" data-act="toggle">
         <span>${escapeHtml(p.label || p.icao)}${tag}</span>
@@ -205,6 +214,7 @@
     setIfIdle("maxRange", st.max_range_km);
     setIfIdle("autodetect", !!st.autodetect, "checked");
     setIfIdle("autolog", !!st.autolog, "checked");
+    setIfIdle("reticleShape", st.overlay.reticle_shape);
   }
   document.querySelectorAll("[data-ov]").forEach((cb) =>
     cb.addEventListener("change", () => api("POST", "/api/settings", { overlay: { [cb.dataset.ov]: cb.checked } })));
@@ -218,6 +228,7 @@
   $("maxRange").addEventListener("change", (e) => api("POST", "/api/settings", { max_range_km: Number(e.target.value) }));
   $("autodetect").addEventListener("change", (e) => api("POST", "/api/settings", { autodetect: e.target.checked }));
   $("autolog").addEventListener("change", (e) => api("POST", "/api/settings", { autolog: e.target.checked }));
+  $("reticleShape").addEventListener("change", (e) => api("POST", "/api/settings", { overlay: { reticle_shape: e.target.value } }));
 
   // ── site ───────────────────────────────────────────────────────────────
   const SITE = { siteLat: "lat", siteLon: "lon", siteAlt: "alt_m", siteGeoid: "geoid_m" };
@@ -375,7 +386,7 @@
       return [c + r * Math.cos(a), c + r * Math.sin(a)];
     };
     const css_ = getComputedStyle(document.documentElement);
-    const MAG = css_.getPropertyValue("--magenta").trim(), INK = css_.getPropertyValue("--ink").trim();
+    const MAG = css_.getPropertyValue("--darkred").trim(), INK = css_.getPropertyValue("--ink").trim();
     const RULE = css_.getPropertyValue("--rule").trim();
 
     // elevation rings + spokes

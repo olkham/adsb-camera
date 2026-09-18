@@ -50,6 +50,8 @@ overlay:
   offscreen: true
   points: false         # calibration points are always shown while frozen
   hud: true
+  reticle: true         # marker drawn on each in-view aircraft
+  reticle_shape: circle # circle | square | cross | triangle
 
 autodetect:             # experimental; toggle in the UI
   enabled: false

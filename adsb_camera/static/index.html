@@ -7,6 +7,13 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="/static/style.css">
+<script>
+  (function () {
+    var saved = localStorage.getItem("adsbcam-theme");
+    var dark = saved ? saved === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+  })();
+</script>
 </head>
 <body>
 <main class="layout">
@@ -21,8 +28,15 @@
 
   <aside class="side">
     <header class="brand">
-      <h1>ADS-B Camera</h1>
-      <div id="status" class="status" aria-live="polite"></div>
+      <div>
+        <h1>ADS-B Camera</h1>
+        <div id="status" class="status" aria-live="polite"></div>
+      </div>
+      <label class="switch" title="Dark mode">
+        <input type="checkbox" id="themeToggle">
+        <span class="track" aria-hidden="true"></span>
+        <span class="switch-label">Dark</span>
+      </label>
     </header>
 
     <section class="panel" id="calibrate">
@@ -102,7 +116,16 @@
         <label class="check"><input type="checkbox" data-ov="offscreen"> Edge arrows</label>
         <label class="check"><input type="checkbox" data-ov="points"> Calibration points</label>
         <label class="check"><input type="checkbox" data-ov="hud"> Status line</label>
+        <label class="check"><input type="checkbox" data-ov="reticle"> Reticle</label>
       </div>
+      <label class="inline">Reticle shape
+        <select id="reticleShape">
+          <option value="circle">Circle</option>
+          <option value="square">Square corners</option>
+          <option value="cross">Cross (+)</option>
+          <option value="triangle">Triangle</option>
+        </select>
+      </label>
       <label class="inline">Max range (km)<input id="maxRange" type="number" min="1" max="500" step="1"></label>
       <label class="check"><input type="checkbox" id="autodetect"> Add points automatically (experimental)</label>
       <p class="fine">Once calibrated to a few pixels, looks for aircraft near their predicted position and adds confirmed sightings.</p>
