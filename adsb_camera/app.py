@@ -283,7 +283,7 @@ class AdsbCamera:
             self._auto_since_solve = 0
             threading.Thread(target=self.run_solve, daemon=True).start()
 
-    # ── auto-log: save frames around aircraft entering the FOV ───────────
+    # ── auto-log: save frames while a track transits the FOV ─────────────
     def _autolog(self, frame, t, scene):
         cfg = self.cfg["logbook"]
         interval, window = float(cfg["interval_s"]), float(cfg["window_s"])
@@ -303,8 +303,11 @@ class AdsbCamera:
             icao = a["icao"]
             seen.add(icao)
             was_in_view = self._autolog_in_view.get(icao, False)
-            if a["in_view"] and not was_in_view:
-                entered.append(icao)
+            if a["in_view"]:
+                if not was_in_view:
+                    entered.append(icao)
+                # Refresh every tick it's in view, so logging spans the whole transit
+                # (plus `window` seconds either side), not just the moment it entered.
                 self._autolog_active[icao] = t + window
             self._autolog_in_view[icao] = a["in_view"]
         for icao in list(self._autolog_in_view):
@@ -327,7 +330,7 @@ class AdsbCamera:
             if key not in self._autolog_saved_ts:
                 self._autolog_saved_ts.add(key)
                 self.logstore.add(frame.copy(), t, self.store.snapshot(since=t - 150),
-                                  source="auto", reason="entering view")
+                                  source="auto", reason="in view")
         if len(self._autolog_saved_ts) > 4096:
             self._autolog_saved_ts = set(sorted(self._autolog_saved_ts)[-2048:])
 
