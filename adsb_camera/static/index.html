@@ -59,10 +59,19 @@
       <canvas id="sky" width="340" height="340" aria-label="Aircraft positions by azimuth and elevation, with the camera's field of view"></canvas>
     </section>
 
-    <details class="panel" id="framesPanel">
-      <summary>Saved frames</summary>
-      <p class="fine">Save a frame while aircraft are visible, then come back later, view it and click the aircraft in it to add calibration points.</p>
-      <ol id="frames" class="points"></ol>
+    <details class="panel" id="framesPanel" open>
+      <summary>Saved frames <span id="framesCount" class="count"></span></summary>
+      <p class="fine">Scrub the timeline to find a frame, then click the aircraft in it to add calibration points.</p>
+      <div id="filmstrip" class="filmstrip" tabindex="0" role="listbox" aria-label="Saved frames, oldest first"></div>
+      <input type="range" id="scrub" class="scrub" min="0" max="0" value="0" step="1"
+             aria-label="Scrub through saved frames" disabled>
+      <div class="strip-foot">
+        <span id="frameMeta" class="fine"></span>
+        <span class="row gap">
+          <button id="btnDelFrame" class="quiet" title="Delete the selected frame" disabled>Delete</button>
+          <button id="btnClearFrames" class="quiet danger" disabled>Clear all</button>
+        </span>
+      </div>
     </details>
 
     <details class="panel" id="cameraPanel" open>

@@ -5,6 +5,7 @@
   const viewer = $("viewer"), img = $("stream"), loupe = $("loupe"), picker = $("picker");
   let state = null;
   let frozenImg = null;          // full-resolution frozen frame for the loupe
+  let frozenSeq = 0;             // which load of it is the current one
   let dragging = new Set();      // sliders currently being moved
   let formDirty = new Set();     // site inputs being edited
 
@@ -89,6 +90,12 @@
     sm.textContent = ls.message || "";
     sm.className = "solve-msg " + (ls.ok === true ? "ok" : ls.ok === false ? "err" : "");
 
+    if (!viewTimer && !viewPending && s.viewing_frame !== selId
+        && (s.viewing_frame || frames.some((f) => f.id === selId))) {
+      selId = s.viewing_frame;
+      renderTimeline();
+    }
+
     renderPoints(s.points);
     renderSliders(cam);
     renderSettings(s);
@@ -127,7 +134,17 @@
     refresh();
   });
 
-  // ── saved frames ───────────────────────────────────────────────────────
+  // ── saved frames: scrollable timeline ───────────────────────
+  // The strip runs oldest to newest, left to right. Selecting a frame loads it
+  // into the viewer exactly like freezing does, so points can be clicked on it.
+  const strip = $("filmstrip"), scrub = $("scrub");
+  let frames = [];          // ascending by time
+  let framesSig = null;     // ids of what is currently in the DOM; null forces a rebuild
+  let selId = null;         // selected frame id (may lead the server while scrubbing)
+  let viewTimer = null;     // debounce for the load-this-frame request
+  let viewPending = false;  // ... and while that request is in flight
+  const GAP_S = 120;        // a break this long starts a new run on the strip
+
   function timeAgo(t) {
     const s = Math.max(0, Date.now() / 1000 - t);
     if (s < 60) return `${Math.round(s)}s ago`;
@@ -135,32 +152,122 @@
     if (s < 86400) return `${Math.round(s / 3600)}h ago`;
     return new Date(t * 1000).toLocaleString();
   }
+  const clock = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  function gapLabel(dt) {
+    if (dt < 3600) return `${Math.round(dt / 60)}m`;
+    if (dt < 86400) return `${Math.round(dt / 3600)}h`;
+    return `${Math.round(dt / 86400)}d`;
+  }
 
   async function refreshFrames() {
     let r;
     try { r = await api("GET", "/api/frames"); } catch (e) { return; }
-    const ol = $("frames");
-    if (!r.items.length) {
-      ol.innerHTML = `<li class="empty">No saved frames yet.</li>`;
-      return;
-    }
-    ol.innerHTML = r.items.map((f) => `
-      <li class="${f.id === r.viewing ? "viewing" : ""}" data-id="${f.id}">
-        <span class="tag">${f.source}</span>
-        <span>${timeAgo(f.t)}<span class="fine"> · ${f.n_aircraft} aircraft</span></span>
-        <button data-act="view">View</button>
-        <button class="x" data-act="del" aria-label="Delete saved frame">×</button></li>`).join("");
+    frames = r.items.slice().sort((a, b) => a.t - b.t);
+    if (r.viewing && r.viewing !== selId && !viewTimer && !viewPending) selId = r.viewing;
+    renderTimeline();
   }
   setInterval(refreshFrames, 5000);
 
-  $("frames").addEventListener("click", async (e) => {
-    const li = e.target.closest("li[data-id]");
-    if (!li) return;
-    const id = li.dataset.id, act = e.target.dataset.act;
-    if (act === "view") { const r = await api("POST", `/api/frames/${id}/view`); if (!r.ok) toast(r.message); }
-    else if (act === "del") await api("DELETE", `/api/frames/${id}`);
-    else return;
-    refreshFrames();
+  function renderTimeline() {
+    const sig = frames.map((f) => f.id).join(",");
+    if (sig !== framesSig) {
+      const wasAtEnd = strip.scrollWidth - strip.scrollLeft - strip.clientWidth < 40;
+      const keepLeft = strip.scrollLeft;
+      strip.innerHTML = frames.length
+        ? frames.map((f, i) => {
+            const dt = i ? f.t - frames[i - 1].t : 0;
+            const gap = dt > GAP_S ? `<span class="gap" aria-hidden="true">${gapLabel(dt)}</span>` : "";
+            return gap + `<button class="shot" role="option" data-i="${i}" aria-selected="false"
+              title="${escapeHtml(new Date(f.t * 1000).toLocaleString())} - ${f.source} - ${f.n_aircraft} aircraft">
+              <img src="/api/frames/${f.id}/thumb.jpg" alt="" loading="lazy" draggable="false">
+              <span class="shot-t">${clock(f.t)}</span>
+              ${f.source === "manual" ? `<span class="shot-pin" title="Saved by hand"></span>` : ""}
+            </button>`;
+          }).join("")
+        : `<p class="empty">No saved frames yet. Use "Save frame", or turn on auto-logging in Overlay.</p>`;
+      framesSig = sig;
+      strip.scrollLeft = wasAtEnd ? strip.scrollWidth : keepLeft;
+    }
+    scrub.max = String(Math.max(0, frames.length - 1));
+    scrub.disabled = frames.length < 2;
+    $("framesCount").textContent = frames.length || "";
+    $("btnClearFrames").disabled = !frames.length;
+
+    let i = frames.findIndex((f) => f.id === selId);
+    if (i < 0) selId = null;
+    $("btnDelFrame").disabled = i < 0;
+    strip.querySelectorAll(".shot").forEach((el, k) => {
+      const on = k === i;
+      el.classList.toggle("on", on);
+      el.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    if (i >= 0 && document.activeElement !== scrub) scrub.value = String(i);
+    const f = i < 0 ? null : frames[i];
+    $("frameMeta").textContent = f
+      ? `${i + 1} of ${frames.length} · ${clock(f.t)} · ${timeAgo(f.t)} · ${f.n_aircraft} aircraft`
+      : frames.length ? `${frames.length} frames · pick one to calibrate from` : "";
+  }
+
+  // Select by index: update the strip at once, load the frame a beat later so
+  // dragging the scrubber doesn't fire a request per step.
+  function selectFrame(i, { immediate = false, scroll = true } = {}) {
+    if (!frames.length) return;
+    i = Math.min(Math.max(0, i), frames.length - 1);
+    selId = frames[i].id;
+    renderTimeline();
+    if (scroll) {
+      const el = strip.querySelectorAll(".shot")[i];
+      if (el) el.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+    }
+    clearTimeout(viewTimer);
+    const go = async () => {
+      viewTimer = null;
+      try {
+        const r = await api("POST", `/api/frames/${selId}/view`);
+        if (!r.ok) return toast(r.message);
+        frozenImg = null;                  // the loupe must re-read the new frame
+      } finally { viewPending = false; }
+      refresh();
+    };
+    viewPending = true;
+    if (immediate) go(); else viewTimer = setTimeout(go, 180);
+  }
+
+  strip.addEventListener("click", (e) => {
+    const b = e.target.closest("button.shot");
+    if (b) selectFrame(Number(b.dataset.i), { immediate: true, scroll: false });
+  });
+  // A vertical wheel over the strip scrolls it sideways — it is one row tall.
+  strip.addEventListener("wheel", (e) => {
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    e.preventDefault();
+    strip.scrollLeft += e.deltaY;
+  }, { passive: false });
+  scrub.addEventListener("input", (e) => selectFrame(Number(e.target.value)));
+
+  function stepFrame(d) {
+    const i = frames.findIndex((f) => f.id === selId);
+    selectFrame(i < 0 ? (d > 0 ? 0 : frames.length - 1) : i + d);
+  }
+
+  $("btnDelFrame").addEventListener("click", async () => {
+    const i = frames.findIndex((f) => f.id === selId);
+    if (i < 0) return;
+    clearTimeout(viewTimer); viewTimer = null; viewPending = false;
+    await api("DELETE", `/api/frames/${frames[i].id}`);
+    frames.splice(i, 1);
+    framesSig = null;                      // force a rebuild of the strip
+    if (frames.length) selectFrame(Math.min(i, frames.length - 1), { immediate: true });
+    else { selId = null; renderTimeline(); refresh(); }
+  });
+
+  $("btnClearFrames").addEventListener("click", async () => {
+    if (!confirm(`Delete all ${frames.length} saved frames? Calibration points already added are kept.`)) return;
+    clearTimeout(viewTimer); viewTimer = null; viewPending = false;
+    const r = await api("DELETE", "/api/frames");
+    selId = null; frames = []; framesSig = null;
+    renderTimeline();
+    toast(`${r.deleted} saved frame${r.deleted === 1 ? "" : "s"} deleted`);
     refresh();
   });
 
@@ -259,7 +366,9 @@
     try {
       await api("POST", "/api/frames");
       toast("Frame saved");
-      refreshFrames();
+      $("framesPanel").open = true;
+      await refreshFrames();
+      strip.scrollLeft = strip.scrollWidth;
     } catch (e) { toast("Could not save frame"); }
   });
   $("btnSolve").addEventListener("click", async () => {
@@ -276,11 +385,20 @@
     if (e.target.matches("input, select, textarea")) return;
     if (e.code === "Space") { e.preventDefault(); toggleFreeze(); }
     if (e.key === "Escape") closePicker();
+    const inStrip = frames.length && (strip.contains(document.activeElement) || (state && state.viewing_frame));
+    if (inStrip && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      stepFrame(e.key === "ArrowRight" ? 1 : -1);
+    }
   });
 
+  // The magnifier samples this, so it must be the frame that is loaded now: a load
+  // started for a frame we have since moved off is discarded when it arrives late.
   function loadFrozen() {
+    const mine = ++frozenSeq;
     const im = new Image();
-    im.onload = () => (frozenImg = im);
+    im.onload = () => { if (mine === frozenSeq) frozenImg = im; };
+    im.onerror = () => { if (mine === frozenSeq) frozenImg = null; };   // retried next tick
     im.src = "/frozen.jpg?t=" + Date.now();
     frozenImg = "loading";
   }
@@ -318,6 +436,9 @@
     if (!state) return;
     if (!state.frozen) { toast("Freeze the frame first (Space), then click an aircraft."); return; }
     if (!state.site_valid) { toast("Set the camera location first."); return; }
+    // Until the frame on screen is the one the server has loaded, a click would be
+    // measured against the wrong picture.
+    if (!(frozenImg instanceof Image)) { toast("Still loading that frame - click again in a moment."); return; }
     const p = normPos(e);
     if (p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) return;
     loupe.hidden = true;

@@ -145,14 +145,24 @@ near the edges. Two ways around that:
 
 - **Save frame**: instead of freezing, saves the current frame and the
   aircraft data behind it to disk. Live streaming carries on. Come back later
-  (even after the aircraft has gone), open **Saved frames**, press **View** on
-  one, and click its aircraft exactly as you would a frozen frame.
+  (even after the aircraft has gone), pick it out of the **Saved frames**
+  timeline, and click its aircraft exactly as you would a frozen frame.
 - **Auto-log frames when aircraft enter view** (Overlay panel): watches for a
   track entering the field of view and saves frames roughly once a second for
   five seconds either side of that moment, so a good pass through the frame is
-  captured without you needing to catch it live. Review and click through them
-  from **Saved frames** whenever it's convenient; delete the ones you don't
-  need.
+  captured without you needing to catch it live.
+
+The **Saved frames** panel shows every saved frame as a timeline: a strip of
+thumbnails running oldest to newest, with a scrubber under it. Drag the
+scrubber (or click a thumbnail, or use ← and →) and the main view loads that
+frame as you go, so you can scan a whole auto-logged pass in a second or two
+and stop on the frames worth annotating. Breaks of more than two minutes show
+as a marked gap, so separate sessions stay apart. An amber dot marks frames you
+saved by hand; the rest are auto-logged.
+
+**Delete** removes the selected frame. Once you've annotated what you need and
+solved, **Clear all** deletes every saved frame and its thumbnail from
+`data/frames/` — the calibration points you already added are kept.
 
 Tips:
 
@@ -219,8 +229,10 @@ detection, projection round-trips):
 | POST | `/api/frames` | Save the current frame (+ aircraft data) for later |
 | GET | `/api/frames` | List saved frames |
 | GET | `/api/frames/{id}/image.jpg` | A saved frame, full resolution, no overlay |
+| GET | `/api/frames/{id}/thumb.jpg` | Small preview of a saved frame, for the timeline |
 | POST | `/api/frames/{id}/view` | Load a saved frame for calibration (like freezing) |
 | DELETE | `/api/frames/{id}` | Delete a saved frame |
+| DELETE | `/api/frames` | Delete every saved frame |
 | POST | `/api/candidates` `{x, y}` | Aircraft that could be at a normalised click |
 | POST | `/api/points` `{x, y, icao}` or `{x, y, landmark:{lat,lon,alt_m,label}}` | Add a point |
 | PATCH/DELETE | `/api/points/{id}` | Enable/disable, delete |

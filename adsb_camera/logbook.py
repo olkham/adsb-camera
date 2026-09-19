@@ -7,8 +7,9 @@ one frame in memory). Frames can be saved manually or by the auto-log
 feature, which watches for tracks entering the field of view.
 
 Each frame is a pair of files: ``<id>.jpg`` (the raw frame, no overlay) and
-``<id>.json`` (frame time + aircraft snapshot). A lightweight ``index.json``
-lists every frame without its snapshot, for fast browsing.
+``<id>.json`` (frame time + aircraft snapshot), alongside ``<id>_thumb.jpg``,
+a small copy used by the timeline strip in the UI. A lightweight
+``index.json`` lists every frame without its snapshot, for fast browsing.
 """
 from __future__ import annotations
 
@@ -25,6 +26,8 @@ import cv2
 import numpy as np
 
 log = logging.getLogger("adsb_camera.logbook")
+
+THUMB_W = 240          # px wide; enough for the timeline strip at 2x
 
 
 class LogStore:
@@ -64,6 +67,7 @@ class LogStore:
             fh.write(buf.tobytes())
         with open(os.path.join(self.dir, f"{fid}.json"), "w", encoding="utf-8") as fh:
             json.dump({"t": t, "snapshot": snapshot}, fh)
+        self._write_thumb(fid, frame)
         entry = {"id": fid, "t": t, "w": w, "h": h, "source": source, "reason": reason,
                  "created": time.time(), "n_aircraft": len(snapshot)}
         with self._lock:
@@ -72,6 +76,20 @@ class LogStore:
             if source == "auto":
                 self._prune_auto()
         return entry
+
+    def _write_thumb(self, fid: str, frame: np.ndarray) -> Optional[str]:
+        h, w = frame.shape[:2]
+        s = THUMB_W / float(w)
+        small = cv2.resize(frame, (THUMB_W, max(1, int(round(h * s)))),
+                           interpolation=cv2.INTER_AREA) if s < 1 else frame
+        ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        if not ok:
+            log.warning("Could not encode thumbnail for %s", fid)
+            return None
+        path = self.thumb_path(fid)
+        with open(path, "wb") as fh:
+            fh.write(buf.tobytes())
+        return path
 
     def _prune_auto(self):
         """Drop the oldest auto-logged frames beyond the configured cap (manual saves are never pruned)."""
@@ -115,11 +133,24 @@ class LogStore:
     def frame_path(self, fid: str) -> str:
         return os.path.join(self.dir, f"{fid}.jpg")
 
+    def thumb_path(self, fid: str) -> str:
+        return os.path.join(self.dir, f"{fid}_thumb.jpg")
+
+    def ensure_thumb(self, fid: str) -> Optional[str]:
+        """Path to the thumbnail, making it from the full frame if it isn't there yet."""
+        path = self.thumb_path(fid)
+        if os.path.exists(path):
+            return path
+        img = self.load_image(fid)
+        if img is None:
+            return None
+        return self._write_thumb(fid, img)
+
     # ── delete ────────────────────────────────────────────────────────────
     def _remove_files(self, fid: str):
-        for ext in (".jpg", ".json"):
+        for suffix in (".jpg", ".json", "_thumb.jpg"):
             try:
-                os.remove(os.path.join(self.dir, f"{fid}{ext}"))
+                os.remove(os.path.join(self.dir, f"{fid}{suffix}"))
             except OSError:
                 pass
 
@@ -131,3 +162,13 @@ class LogStore:
             self._save_index()
         self._remove_files(fid)
         return True
+
+    def clear(self) -> int:
+        """Delete every saved frame. Returns how many were removed."""
+        with self._lock:
+            ids = [e["id"] for e in self._entries]
+            self._entries = []
+            self._save_index()
+        for fid in ids:
+            self._remove_files(fid)
+        return len(ids)

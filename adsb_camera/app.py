@@ -173,8 +173,11 @@ class AdsbCamera:
 
     def _render_once(self):
         acfg, scfg = self.cfg["aircraft"], self.cfg["server"]
+        # Read the frame and the version stamp together. Loading a saved frame sets
+        # both; picking them up from either side of that would stamp the new version
+        # onto the old picture, and the viewer would sit on the previous frame.
         with self.lock:
-            frozen = self.frozen
+            frozen, version = self.frozen, self.version
         if frozen:
             frame, t, snap = frozen["frame"], frozen["t"], frozen["snapshot"]
         else:
@@ -196,7 +199,7 @@ class AdsbCamera:
                 log.info("Frame size %dx%d - adapting camera model", w, h)
                 self.camera = self.camera.scaled_to(w, h)
                 self._changed()
-            cam, version = self.camera, self.version
+            cam = self.camera
             opts = dict(self.overlay)
 
         frame_enu = self._site_frame()
@@ -387,6 +390,15 @@ class AdsbCamera:
                 self._viewing_frame_id = None
                 self.version += 1
         return {"ok": removed}
+
+    def clear_frames(self) -> dict:
+        n = self.logstore.clear()
+        with self.lock:
+            if self._viewing_frame_id is not None:
+                self.frozen = None
+                self._viewing_frame_id = None
+                self.version += 1
+        return {"ok": True, "deleted": n}
 
     def frozen_jpeg(self) -> Optional[bytes]:
         with self.lock:

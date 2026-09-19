@@ -83,6 +83,15 @@ def create_app(core: AdsbCamera) -> FastAPI:
             raise HTTPException(404, "No such saved frame")
         return FileResponse(path, media_type="image/jpeg", headers=NO_CACHE)
 
+    @api.get("/api/frames/{fid}/thumb.jpg", summary="Small preview of a saved frame, for the timeline")
+    def frame_thumb(fid: str):
+        path = core.logstore.ensure_thumb(fid)
+        if not path:
+            raise HTTPException(404, "No such saved frame")
+        # Frame ids are unique and their pixels never change, so let the browser keep these.
+        return FileResponse(path, media_type="image/jpeg",
+                            headers={"Cache-Control": "public, max-age=604800, immutable"})
+
     @api.post("/api/frames/{fid}/view", summary="Load a saved frame for calibration, like freezing")
     def view_frame(fid: str):
         return core.view_frame(fid)
@@ -90,6 +99,10 @@ def create_app(core: AdsbCamera) -> FastAPI:
     @api.delete("/api/frames/{fid}")
     def delete_frame(fid: str):
         return core.delete_frame(fid)
+
+    @api.delete("/api/frames", summary="Delete every saved frame")
+    def clear_frames():
+        return core.clear_frames()
 
     @api.post("/api/candidates", summary="Aircraft that could be at a clicked point")
     def candidates(x: float = Body(...), y: float = Body(...)):
