@@ -26,6 +26,9 @@ DEFAULTS: dict = {
         "reconnect_s": 3.0,
         "width": None,          # only used for local webcams (index sources)
         "height": None,
+        "fps": 30,              # requested capture rate; 0 leaves the camera alone
+        "fourcc": "MJPG",       # webcams need this to run at speed; "" keeps their default
+        "backend": "auto",      # auto, dshow, msmf, v4l2, avfoundation, gstreamer, any
     },
     "mqtt": {
         "host": "192.168.1.241",

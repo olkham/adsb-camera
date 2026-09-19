@@ -56,7 +56,7 @@
     const s = state, cam = s.camera;
     const inView = s.aircraft.filter((a) => a.in_view).length;
     $("status").innerHTML =
-      `<span>${dot(s.video.connected, !!s.video.fps)}Video ${s.video.connected ? `${s.video.width}×${s.video.height}, ${fmt(s.video.fps, 0)} fps` : "offline"}</span>` +
+      `<span>${dot(s.video.connected, !!s.video.fps)}Video ${s.video.connected ? `${s.video.width}×${s.video.height}, ${fmt(s.video.fps, 0)} fps${s.video.format ? ` (${escapeHtml(s.video.format.split(" ")[0])})` : ""}` : "offline"}</span>` +
       `<span>${dot(s.mqtt.connected)}ADS-B ${s.mqtt.connected ? `${s.mqtt.tracked} tracked` : "offline"}</span>` +
       `<span>${dot(cam.calibrated && cam.rms_px < 5, cam.calibrated)}${cam.calibrated ? `RMS ${fmt(cam.rms_px)} px` : "Uncalibrated"}</span>` +
       `<span>${inView} in view</span>`;

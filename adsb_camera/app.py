@@ -77,7 +77,8 @@ class AdsbCamera:
                              m["password"], bool(m["tls"]), client_id=f"adsb-camera-{os.getpid()}")
         v = cfg["video"]
         self.video = VideoSource(v["source"], v["rtsp_transport"], v["reconnect_s"],
-                                 v.get("width"), v.get("height"))
+                                 v.get("width"), v.get("height"), v.get("fps"),
+                                 v.get("fourcc", "MJPG"), v.get("backend", "auto"))
         ad = cfg["autodetect"]
         self.refiner = AutoRefiner(ad["interval_s"], ad["search_px"])
 
@@ -654,6 +655,7 @@ class AdsbCamera:
             "settings": settings,
             "video": {"connected": self.video.connected, "fps": round(self.video.fps, 1),
                       "source": self.video.describe(), "error": self.video.error,
+                      "format": self.video.format,
                       "width": frame.shape[1] if frame is not None else None,
                       "height": frame.shape[0] if frame is not None else None},
             "mqtt": {"connected": self.feed.connected, "host": f"{self.feed.host}:{self.feed.port}",

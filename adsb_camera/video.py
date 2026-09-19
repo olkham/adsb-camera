@@ -28,13 +28,28 @@ def _parse_source(src):
     return int(s) if s.isdigit() else s
 
 
+BACKENDS = {"auto": None, "any": cv2.CAP_ANY, "dshow": cv2.CAP_DSHOW, "msmf": cv2.CAP_MSMF,
+            "v4l2": cv2.CAP_V4L2, "avfoundation": cv2.CAP_AVFOUNDATION,
+            "gstreamer": cv2.CAP_GSTREAMER, "ffmpeg": cv2.CAP_FFMPEG}
+
+
+def _fourcc_name(v) -> str:
+    v = int(v or 0)
+    return "".join(chr((v >> (8 * i)) & 0xFF) for i in range(4)).strip() if v else ""
+
+
 class VideoSource:
     def __init__(self, source, rtsp_transport: str = "tcp", reconnect_s: float = 3.0,
-                 width: Optional[int] = None, height: Optional[int] = None):
+                 width: Optional[int] = None, height: Optional[int] = None,
+                 fps: Optional[float] = None, fourcc: str = "MJPG", backend: str = "auto"):
         self.source = _parse_source(source)
         self.rtsp_transport = rtsp_transport
         self.reconnect_s = reconnect_s
         self.req_size = (width, height)
+        self.req_fps = float(fps or 0)
+        self.req_fourcc = (fourcc or "").strip().upper()
+        self.backend = (backend or "auto").strip().lower()
+        self.format = ""        # what the camera actually gave us, e.g. "MJPG 1920x1080"
         self._lock = threading.Lock()
         self._frame: Optional[np.ndarray] = None
         self._t = 0.0
@@ -77,18 +92,59 @@ class VideoSource:
         return s
 
     # ── worker ────────────────────────────────────────────────────────────
+    def _open_camera(self, src: int):
+        """A local webcam, asking for a compressed format so it runs at full speed.
+
+        USB webcams default to uncompressed frames (YUY2), and the bus cannot carry
+        many of those: a 1080p webcam drops to about 5 fps. Asking for MJPG fixes it,
+        but only if the request reaches the driver while the format is being
+        negotiated - setting it after opening is ignored unless the frame size was
+        set first. Opening with the properties does it in one go; the rest is
+        fallbacks for cameras or backends that refuse them.
+        """
+        api = BACKENDS.get(self.backend) or cv2.CAP_ANY
+        w, h = self.req_size
+        cc = cv2.VideoWriter_fourcc(*self.req_fourcc[:4]) if len(self.req_fourcc) == 4 else 0
+        params = self._capture_params(w, h, cc)
+
+        if params:
+            cap = cv2.VideoCapture(src, api, params)
+            if cap.isOpened():
+                return cap
+            log.info("Video: camera %s would not open with the requested format; "
+                     "setting it afterwards instead", src)
+            cap.release()
+
+        cap = cv2.VideoCapture(src, api)
+        if cap.isOpened():
+            if w and h:                # size first, then format: the order matters here
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(w))
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(h))
+            if cc:
+                cap.set(cv2.CAP_PROP_FOURCC, cc)
+            if self.req_fps:
+                cap.set(cv2.CAP_PROP_FPS, self.req_fps)
+        return cap
+
+    def _capture_params(self, w, h, cc) -> list:
+        params = []
+        if cc:
+            params += [cv2.CAP_PROP_FOURCC, cc]
+        if w and h:
+            params += [cv2.CAP_PROP_FRAME_WIDTH, int(w), cv2.CAP_PROP_FRAME_HEIGHT, int(h)]
+        if self.req_fps:
+            params += [cv2.CAP_PROP_FPS, int(self.req_fps)]
+        return params
+
     def _open(self):
         src = self.source
         if isinstance(src, str) and src.lower().startswith("rtsp"):
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = f"rtsp_transport;{self.rtsp_transport}"
         if isinstance(src, int):
-            cap = cv2.VideoCapture(src)
-            w, h = self.req_size
-            if w and h:
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(w))
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(h))
+            cap = self._open_camera(src)
         else:
-            cap = cv2.VideoCapture(src, cv2.CAP_FFMPEG)
+            api = BACKENDS.get(self.backend) or cv2.CAP_FFMPEG
+            cap = cv2.VideoCapture(src, api)
             if not cap.isOpened():
                 cap = cv2.VideoCapture(src)
         try:
@@ -96,6 +152,12 @@ class VideoSource:
         except Exception:
             pass
         return cap
+
+    def _describe_format(self, cap) -> str:
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+        cc = _fourcc_name(cap.get(cv2.CAP_PROP_FOURCC))
+        return " ".join(x for x in (cc, f"{w}x{h}" if w and h else "") if x)
 
     def _run(self):
         while not self._stop.is_set():
@@ -108,6 +170,12 @@ class VideoSource:
                 self._stop.wait(self.reconnect_s)
                 continue
             file_fps = cap.get(cv2.CAP_PROP_FPS) if self.is_file else 0
+            self.format = self._describe_format(cap)
+            if isinstance(self.source, int):
+                log.info("Video: camera %s giving %s", self.source, self.format or "?")
+                if self.req_fourcc and _fourcc_name(cap.get(cv2.CAP_PROP_FOURCC)) != self.req_fourcc:
+                    log.warning("Video: asked for %s but got %s - an uncompressed format will "
+                                "limit the frame rate", self.req_fourcc, self.format or "?")
             self.connected, self.error = True, ""
             failures = 0
             while not self._stop.is_set():

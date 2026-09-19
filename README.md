@@ -111,6 +111,20 @@ Edit `config.yaml` (or use environment variables
 Use the main stream rather than the sub stream: more pixels means more precise
 clicks. If you use a different resolution later, the calibration rescales.
 
+**A local webcam** is `video.source: 0` (or 1, 2 …), with `video.width`,
+`video.height` and `video.fps` for what to ask it for. `video.fourcc` matters
+more than it looks: a USB webcam hands over uncompressed frames unless asked
+otherwise, and the bus cannot carry many of those — a Logitech C920 measured
+**4.9 fps at 1080p** that way, and **29.5 fps** once asked for `MJPG`, which is
+the default. If a camera refuses MJPG, set `fourcc: ""` to take whatever it
+offers. The status line shows the format actually negotiated, so a silent
+fallback to an uncompressed one is visible rather than just slow.
+
+`video.backend` picks the capture API (`auto`, `dshow`, `msmf`, `v4l2`,
+`avfoundation`, `gstreamer`, `any`). Leave it on `auto` unless a camera will not
+open — on Windows, `auto` resolves to DirectShow, and MSMF cannot open some
+cameras at all.
+
 **Camera location** (`site.lat`, `site.lon`, `site.alt_m`): the camera, not
 the antenna. A phone GPS reading is fine; the angular error from a 20 m
 position error is negligible for aircraft kilometres away. `alt_m` is height

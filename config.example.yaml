@@ -9,8 +9,15 @@ video:
   source: "rtsp://127.0.0.1:8554/video_main"
   rtsp_transport: tcp
   reconnect_s: 3
-  # width: 1920      # only used for local webcam indexes
+  # The rest is for local webcam indexes only.
+  # width: 1920
   # height: 1080
+  fps: 30            # requested capture rate; 0 leaves the camera alone
+  # A webcam hands over uncompressed frames unless asked otherwise, and USB cannot
+  # carry many of those: 1080p drops to about 5 fps. MJPG is what gets you 30.
+  # Set to "" if a camera refuses it (the status line shows what you actually got).
+  fourcc: MJPG
+  backend: auto      # auto, dshow, msmf, v4l2, avfoundation, gstreamer, any
 
 mqtt:
   host: 192.168.1.241
