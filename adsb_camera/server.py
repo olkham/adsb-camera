@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from typing import Optional
 
 from fastapi import Body, FastAPI, HTTPException
@@ -13,6 +14,40 @@ from .app import AdsbCamera
 
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 NO_CACHE = {"Cache-Control": "no-store"}
+
+# A browser paints a multipart part only once the NEXT one starts to arrive, so the
+# last frame sent is always the one still waiting. Live video pushes the previous
+# frame along by itself; a still picture - a frozen frame, or a saved frame being
+# reviewed - has nothing behind it, and the viewer would sit on the frame before it
+# until something else moved. Repeating the frame after a pause pushes it onto the
+# screen. The live pause is long enough that only a stalled source reaches it.
+STILL_REPEAT_S = 0.06
+LIVE_REPEAT_S = 0.25
+
+
+def mjpeg_part(jpg: bytes) -> bytes:
+    return (b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
+            + str(len(jpg)).encode() + b"\r\n\r\n" + jpg + b"\r\n")
+
+
+async def mjpeg_stream(core, sleep_s: float = 0.02):
+    """Multipart JPEG parts for one viewer, repeating a still frame so it gets painted."""
+    core.clients += 1
+    last, repeat_at = -1, 0.0
+    try:
+        while True:
+            jpg, seq = core.latest_jpeg()
+            now = time.monotonic()
+            if jpg is not None and seq != last:
+                last = seq
+                repeat_at = now + (STILL_REPEAT_S if core.frozen else LIVE_REPEAT_S)
+                yield mjpeg_part(jpg)
+            elif jpg is not None and repeat_at and now >= repeat_at:
+                repeat_at = 0.0
+                yield mjpeg_part(jpg)
+            await asyncio.sleep(sleep_s)
+    finally:
+        core.clients -= 1
 
 
 def create_app(core: AdsbCamera) -> FastAPI:
@@ -25,21 +60,8 @@ def create_app(core: AdsbCamera) -> FastAPI:
 
     @api.get("/stream.mjpeg", summary="Annotated live stream (MJPEG)")
     async def stream():
-        async def gen():
-            core.clients += 1
-            last = -1
-            try:
-                while True:
-                    jpg, seq = core.latest_jpeg()
-                    if jpg is not None and seq != last:
-                        last = seq
-                        yield (b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
-                               + str(len(jpg)).encode() + b"\r\n\r\n" + jpg + b"\r\n")
-                    await asyncio.sleep(0.02)
-            finally:
-                core.clients -= 1
-
-        return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame",
+        return StreamingResponse(mjpeg_stream(core),
+                                 media_type="multipart/x-mixed-replace; boundary=frame",
                                  headers=NO_CACHE)
 
     @api.get("/snapshot.jpg", summary="Latest annotated frame")
