@@ -34,6 +34,13 @@ def _reticle_segments(shape: str, r: float):
     return None  # "circle"
 
 
+def _reticle_scale(opts) -> float:
+    try:
+        return min(4.0, max(0.3, float(opts.get("reticle_size", 1.0))))
+    except (TypeError, ValueError):
+        return 1.0
+
+
 def _draw_reticle(img, center, r, color, th, shape: str):
     u, v = center
     segs = _reticle_segments(shape, r)
@@ -137,7 +144,7 @@ def draw_aircraft(img, scene, s, ui, opts):
         color = (0, 0, 255) if a["emergency"] else _bgr(a["rgb"])
         u, v = a["uv"][0] * s, a["uv"][1] * s
         if a["in_view"]:
-            r = int(11 * ui)
+            r = max(2, int(11 * ui * _reticle_scale(opts)))
             c = (int(u), int(v))
             if opts.get("reticle", True):
                 _draw_reticle(img, c, r, color, th, opts.get("reticle_shape", "circle"))

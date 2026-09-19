@@ -322,6 +322,8 @@
     setIfIdle("autodetect", !!st.autodetect, "checked");
     setIfIdle("autolog", !!st.autolog, "checked");
     setIfIdle("reticleShape", st.overlay.reticle_shape);
+    setIfIdle("reticleSize", st.overlay.reticle_size ?? 1);
+    $("o_reticleSize").textContent = `${Number($("reticleSize").value).toFixed(1)}×`;
   }
   document.querySelectorAll("[data-ov]").forEach((cb) =>
     cb.addEventListener("change", () => api("POST", "/api/settings", { overlay: { [cb.dataset.ov]: cb.checked } })));
@@ -336,6 +338,14 @@
   $("autodetect").addEventListener("change", (e) => api("POST", "/api/settings", { autodetect: e.target.checked }));
   $("autolog").addEventListener("change", (e) => api("POST", "/api/settings", { autolog: e.target.checked }));
   $("reticleShape").addEventListener("change", (e) => api("POST", "/api/settings", { overlay: { reticle_shape: e.target.value } }));
+  // Size updates as it is dragged, but only the last position is sent.
+  let reticleTimer = null;
+  $("reticleSize").addEventListener("input", (e) => {
+    const v = Number(e.target.value);
+    $("o_reticleSize").textContent = `${v.toFixed(1)}×`;
+    clearTimeout(reticleTimer);
+    reticleTimer = setTimeout(() => api("POST", "/api/settings", { overlay: { reticle_size: v } }), 80);
+  });
 
   // ── site ───────────────────────────────────────────────────────────────
   const SITE = { siteLat: "lat", siteLon: "lon", siteAlt: "alt_m", siteGeoid: "geoid_m" };

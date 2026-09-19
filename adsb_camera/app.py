@@ -612,6 +612,11 @@ class AdsbCamera:
                 if k == "reticle_shape":
                     if v in RETICLE_SHAPES:
                         self.overlay[k] = v
+                elif k == "reticle_size":
+                    try:
+                        self.overlay[k] = min(4.0, max(0.3, float(v)))
+                    except (TypeError, ValueError):
+                        pass
                 elif k in self.overlay:
                     self.overlay[k] = bool(v)
             for k, v in (d.get("solve") or {}).items():

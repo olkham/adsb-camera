@@ -59,6 +59,7 @@ overlay:
   hud: true
   reticle: true         # marker drawn on each in-view aircraft
   reticle_shape: circle # circle | square | cross | triangle
+  reticle_size: 1.0     # bigger or smaller marker (0.3 - 4.0); also moves labels clear
 
 autodetect:             # experimental; toggle in the UI
   enabled: false

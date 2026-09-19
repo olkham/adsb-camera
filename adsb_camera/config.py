@@ -67,6 +67,7 @@ DEFAULTS: dict = {
         "hud": True,
         "reticle": True,        # marker drawn on each in-view aircraft
         "reticle_shape": "circle",   # circle | square | cross | triangle
+        "reticle_size": 1.0,    # multiplier on the marker's size, 0.3 - 4.0
     },
     "autodetect": {
         "enabled": False,

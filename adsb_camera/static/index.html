@@ -135,6 +135,11 @@
           <option value="triangle">Triangle</option>
         </select>
       </label>
+      <div class="sliders">
+        <label>Reticle size <output id="o_reticleSize"></output>
+          <input type="range" id="reticleSize" min="0.3" max="4" step="0.1">
+        </label>
+      </div>
       <label class="inline">Max range (km)<input id="maxRange" type="number" min="1" max="500" step="1"></label>
       <label class="check"><input type="checkbox" id="autodetect"> Add points automatically (experimental)</label>
       <p class="fine">Once calibrated to a few pixels, looks for aircraft near their predicted position and adds confirmed sightings.</p>
