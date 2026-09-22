@@ -125,6 +125,22 @@ fallback to an uncompressed one is visible rather than just slow.
 open — on Windows, `auto` resolves to DirectShow, and MSMF cannot open some
 cameras at all.
 
+**Exposure watchdog.** A webcam left running for hours can settle on an exposure
+and stop adapting, leaving the picture dark against a bright sky. Every
+`video.exposure_check_s` (3600 by default; 0 turns it off) the average brightness
+of the picture is compared with `video.dark_level` (40 out of 255). If it has gone
+dark, the camera's auto exposure is re-run — switched off and straight back on, so
+the driver works it out again — and if that doesn't help within a few seconds the
+camera is reconnected. The brightness it is judging on is in `/api/state` under
+`video.brightness`, and every step is logged.
+
+Nothing can tell a stuck exposure from a scene that is honestly dark, so after
+both have been tried the camera is left alone until the picture brightens by
+itself. Otherwise every night would be spent reconnecting. One consequence: each
+nightfall costs one auto-exposure nudge and one reconnect, a blip of a second or
+two. Raise `dark_level` to catch a milder fault, lower it (or set
+`exposure_check_s: 0`) to leave the camera alone.
+
 **Camera location** (`site.lat`, `site.lon`, `site.alt_m`): the camera, not
 the antenna. A phone GPS reading is fine; the angular error from a 20 m
 position error is negligible for aircraft kilometres away. `alt_m` is height

@@ -18,6 +18,11 @@ video:
   # Set to "" if a camera refuses it (the status line shows what you actually got).
   fourcc: MJPG
   backend: auto      # auto, dshow, msmf, v4l2, avfoundation, gstreamer, any
+  # A webcam left running for hours can settle on an exposure and stop adapting,
+  # leaving the picture dark in broad daylight. Check this often (seconds, 0 = never)
+  # and, if it has gone dark, re-run the camera's auto exposure, then reconnect it.
+  exposure_check_s: 3600
+  dark_level: 40     # average brightness (0-255) counted as "gone dark"
 
 mqtt:
   host: 192.168.1.241

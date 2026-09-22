@@ -78,7 +78,8 @@ class AdsbCamera:
         v = cfg["video"]
         self.video = VideoSource(v["source"], v["rtsp_transport"], v["reconnect_s"],
                                  v.get("width"), v.get("height"), v.get("fps"),
-                                 v.get("fourcc", "MJPG"), v.get("backend", "auto"))
+                                 v.get("fourcc", "MJPG"), v.get("backend", "auto"),
+                                 v.get("exposure_check_s", 3600), v.get("dark_level", 40))
         ad = cfg["autodetect"]
         self.refiner = AutoRefiner(ad["interval_s"], ad["search_px"])
 
@@ -661,6 +662,8 @@ class AdsbCamera:
             "video": {"connected": self.video.connected, "fps": round(self.video.fps, 1),
                       "source": self.video.describe(), "error": self.video.error,
                       "format": self.video.format,
+                      "brightness": None if self.video.brightness is None
+                      else round(self.video.brightness),
                       "width": frame.shape[1] if frame is not None else None,
                       "height": frame.shape[0] if frame is not None else None},
             "mqtt": {"connected": self.feed.connected, "host": f"{self.feed.host}:{self.feed.port}",

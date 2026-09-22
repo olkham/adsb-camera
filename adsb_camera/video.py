@@ -32,6 +32,14 @@ BACKENDS = {"auto": None, "any": cv2.CAP_ANY, "dshow": cv2.CAP_DSHOW, "msmf": cv
             "v4l2": cv2.CAP_V4L2, "avfoundation": cv2.CAP_AVFOUNDATION,
             "gstreamer": cv2.CAP_GSTREAMER, "ffmpeg": cv2.CAP_FFMPEG}
 
+# Turning auto exposure off and on again makes the driver run it afresh. The values
+# are the backend's own: DirectShow and Media Foundation use these, V4L2 uses 1 and 3.
+AE_MANUAL, AE_AUTO = 0.25, 0.75
+AE_MANUAL_V4L2, AE_AUTO_V4L2 = 1.0, 3.0
+SETTLE_S = 8.0          # give the camera this long to re-expose before judging it
+BRIGHT_EVERY_S = 1.0    # how often the picture's brightness is sampled
+BRIGHT_SAMPLES = 10     # ... and how many of those are averaged
+
 
 def _fourcc_name(v) -> str:
     v = int(v or 0)
@@ -41,7 +49,8 @@ def _fourcc_name(v) -> str:
 class VideoSource:
     def __init__(self, source, rtsp_transport: str = "tcp", reconnect_s: float = 3.0,
                  width: Optional[int] = None, height: Optional[int] = None,
-                 fps: Optional[float] = None, fourcc: str = "MJPG", backend: str = "auto"):
+                 fps: Optional[float] = None, fourcc: str = "MJPG", backend: str = "auto",
+                 exposure_check_s: float = 3600.0, dark_level: float = 40.0):
         self.source = _parse_source(source)
         self.rtsp_transport = rtsp_transport
         self.reconnect_s = reconnect_s
@@ -50,6 +59,14 @@ class VideoSource:
         self.req_fourcc = (fourcc or "").strip().upper()
         self.backend = (backend or "auto").strip().lower()
         self.format = ""        # what the camera actually gave us, e.g. "MJPG 1920x1080"
+        self.check_s = float(exposure_check_s or 0)
+        self.dark_level = float(dark_level)
+        self.brightness: Optional[float] = None   # average of the picture, 0-255
+        self._bright: deque = deque(maxlen=BRIGHT_SAMPLES)
+        self._bright_t = 0.0
+        self._dark_stage = 0    # 0 all well, 1 auto exposure nudged, 2 tried everything
+        self._dark_deadline = 0.0
+        self._next_check = 0.0
         self._lock = threading.Lock()
         self._frame: Optional[np.ndarray] = None
         self._t = 0.0
@@ -159,6 +176,71 @@ class VideoSource:
         cc = _fourcc_name(cap.get(cv2.CAP_PROP_FOURCC))
         return " ".join(x for x in (cc, f"{w}x{h}" if w and h else "") if x)
 
+    # ── exposure watchdog ─────────────────────────────────────────────────
+    def _sample_brightness(self, frame):
+        """Average brightness of the picture, smoothed over the last few seconds."""
+        small = cv2.resize(frame, (160, 90), interpolation=cv2.INTER_AREA)
+        self._bright.append(float(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).mean()))
+        self.brightness = sum(self._bright) / len(self._bright)
+
+    def _kick_auto_exposure(self, cap) -> bool:
+        """Switch auto exposure off and straight back on, so the driver runs it afresh."""
+        manual, auto = (AE_MANUAL_V4L2, AE_AUTO_V4L2) if self.backend == "v4l2"             else (AE_MANUAL, AE_AUTO)
+        try:
+            cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, manual)
+            time.sleep(0.2)
+            return bool(cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, auto))
+        except cv2.error as e:
+            log.warning("Video: could not reach the camera's auto exposure: %s", e)
+            return False
+
+    def _watchdog(self, cap, now) -> bool:
+        """Catch a camera whose auto exposure has got stuck. True asks for a reconnect.
+
+        A webcam left running for hours can settle on an exposure and stop adapting,
+        leaving the picture dark in broad daylight. Nudging auto exposure usually
+        frees it; reopening the camera is the bigger hammer. Neither can tell a stuck
+        exposure from a scene that is honestly dark, so once both have been tried we
+        leave it alone until the picture brightens of its own accord - otherwise every
+        night would be spent reconnecting.
+        """
+        if self._dark_stage == 1:                  # nudged; has it taken effect?
+            if now < self._dark_deadline:
+                return False
+            self._next_check = now + self.check_s
+            b = self.brightness or 0.0
+            if b >= self.dark_level:
+                log.info("Video: auto exposure recovered the picture (brightness %.0f)", b)
+                self._dark_stage = 0
+                return False
+            log.warning("Video: still dark (brightness %.0f) after re-running auto "
+                        "exposure; reconnecting the camera", b)
+            self._dark_stage = 2
+            return True
+
+        if now < self._next_check:
+            return False
+        self._next_check = now + self.check_s
+        b = self.brightness
+        if b is None or len(self._bright) < 3:
+            return False
+        if b >= self.dark_level:
+            if self._dark_stage:
+                log.info("Video: picture is back to normal (brightness %.0f)", b)
+            self._dark_stage = 0
+            return False
+        if self._dark_stage == 2:                  # already tried both; it may just be night
+            log.info("Video: picture still dark (brightness %.0f); leaving the camera "
+                     "alone until it brightens", b)
+            return False
+        log.warning("Video: picture is dark (brightness %.0f, below %.0f) - re-running "
+                    "the camera's auto exposure", b, self.dark_level)
+        self._kick_auto_exposure(cap)
+        self._bright.clear()                       # judge it on what it sends from now on
+        self._dark_stage = 1
+        self._dark_deadline = now + SETTLE_S
+        return False
+
     def _run(self):
         while not self._stop.is_set():
             log.info("Video: opening %s", self.describe())
@@ -178,6 +260,12 @@ class VideoSource:
                                 "limit the frame rate", self.req_fourcc, self.format or "?")
             self.connected, self.error = True, ""
             failures = 0
+            # Only a live camera can have its exposure nudged; files and streams cannot.
+            watch = bool(self.check_s > 0 and isinstance(self.source, int))
+            reopen = False
+            self._bright.clear()
+            self.brightness = None
+            self._next_check = time.time() + self.check_s
             while not self._stop.is_set():
                 ok, frame = cap.read()
                 if not ok or frame is None:
@@ -195,11 +283,22 @@ class VideoSource:
                     self._frame, self._t = frame, now
                     self._seq += 1
                     self._times.append(now)
+                if watch and now - self._bright_t >= BRIGHT_EVERY_S:
+                    self._bright_t = now
+                    self._sample_brightness(frame)
+                    if self._watchdog(cap, now):
+                        reopen = True
+                        break
                 if file_fps:
                     time.sleep(1.0 / max(1.0, file_fps))
             cap.release()
             self.connected = False
-            if not self._stop.is_set():
+            if self._stop.is_set():
+                continue
+            if reopen:
+                log.info("Video: reopening the camera")
+                self._stop.wait(1.0)
+            else:
                 self.error = "stream lost"
                 log.warning("Video: stream lost; reconnecting in %.0fs", self.reconnect_s)
                 self._stop.wait(self.reconnect_s)

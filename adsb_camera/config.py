@@ -29,6 +29,8 @@ DEFAULTS: dict = {
         "fps": 30,              # requested capture rate; 0 leaves the camera alone
         "fourcc": "MJPG",       # webcams need this to run at speed; "" keeps their default
         "backend": "auto",      # auto, dshow, msmf, v4l2, avfoundation, gstreamer, any
+        "exposure_check_s": 3600,   # look for a stuck auto exposure this often; 0 = never
+        "dark_level": 40,       # average brightness (0-255) counted as "gone dark"
     },
     "mqtt": {
         "host": "192.168.1.241",
