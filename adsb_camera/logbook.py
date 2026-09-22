@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 import threading
 import time
 import uuid
@@ -25,6 +24,8 @@ from typing import Optional
 import cv2
 import numpy as np
 
+from .jsonfile import sweep_temp, write_json
+
 log = logging.getLogger("adsb_camera.logbook")
 
 THUMB_W = 240          # px wide; enough for the timeline strip at 2x
@@ -32,11 +33,12 @@ THUMB_W = 240          # px wide; enough for the timeline strip at 2x
 
 class LogStore:
     def __init__(self, dir_path: str, max_auto: int = 300):
-        self.dir = dir_path
+        self.dir = os.path.abspath(dir_path)
         self.max_auto = max_auto
-        os.makedirs(dir_path, exist_ok=True)
-        self._index_path = os.path.join(dir_path, "index.json")
+        os.makedirs(self.dir, exist_ok=True)
+        self._index_path = os.path.join(self.dir, "index.json")
         self._lock = threading.RLock()
+        sweep_temp(self.dir)
         self._entries: list = self._load_index()
 
     def _load_index(self) -> list:
@@ -44,16 +46,36 @@ class LogStore:
             return []
         try:
             with open(self._index_path, "r", encoding="utf-8") as fh:
-                return json.load(fh)
+                entries = json.load(fh)
         except (OSError, ValueError) as e:
             log.error("Could not read %s: %s", self._index_path, e)
             return []
+        # An index write that never landed can leave frames listed whose picture is
+        # gone. Ignore those rather than offering frames that cannot be opened.
+        keep = [e for e in entries if os.path.exists(self.frame_path(e.get("id", "")))]
+        if len(keep) != len(entries):
+            log.warning("Ignoring %d saved frame(s) whose image is missing",
+                        len(entries) - len(keep))
+        return keep
 
     def _save_index(self):
-        fd, tmp = tempfile.mkstemp(dir=self.dir, suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(self._entries, fh, indent=1)
-        os.replace(tmp, self._index_path)
+        write_json(self._index_path, self._entries)
+
+    def _commit(self, entries: list) -> bool:
+        """Put ``entries`` on disk, and only then make them the list we are working from.
+
+        Frame files are deleted by the caller afterwards, so a write that fails leaves
+        the index and the files still agreeing with each other.
+        """
+        before = self._entries
+        self._entries = entries
+        try:
+            self._save_index()
+            return True
+        except OSError as e:
+            self._entries = before
+            log.error("Could not update %s: %s", self._index_path, e)
+            return False
 
     # ── write ─────────────────────────────────────────────────────────────
     def add(self, frame: np.ndarray, t: float, snapshot: dict, source: str = "manual",
@@ -70,11 +92,19 @@ class LogStore:
         self._write_thumb(fid, frame)
         entry = {"id": fid, "t": t, "w": w, "h": h, "source": source, "reason": reason,
                  "created": time.time(), "n_aircraft": len(snapshot)}
+        # Adding and pruning in one write: at the cap this runs on every auto-logged
+        # frame, and the index is the one file everything else wants to read.
         with self._lock:
-            self._entries.append(entry)
-            self._save_index()
-            if source == "auto":
-                self._prune_auto()
+            entries = self._entries + [entry]
+            drop = self._auto_excess(entries) if source == "auto" else set()
+            if self._commit([e for e in entries if e["id"] not in drop] if drop else entries):
+                for fid in drop:
+                    self._remove_files(fid)
+            else:
+                # The frame is on disk; keep it listed so the next save covers it, and
+                # leave the old ones alone rather than deleting them unrecorded. This
+                # must never reach the render loop that called us.
+                self._entries = entries
         return entry
 
     def _write_thumb(self, fid: str, frame: np.ndarray) -> Optional[str]:
@@ -91,17 +121,11 @@ class LogStore:
             fh.write(buf.tobytes())
         return path
 
-    def _prune_auto(self):
-        """Drop the oldest auto-logged frames beyond the configured cap (manual saves are never pruned)."""
-        auto = sorted((e for e in self._entries if e["source"] == "auto"), key=lambda e: e["t"])
+    def _auto_excess(self, entries: list) -> set:
+        """The oldest auto-logged frames beyond the cap (manual saves are never pruned)."""
+        auto = sorted((e for e in entries if e["source"] == "auto"), key=lambda e: e["t"])
         excess = len(auto) - self.max_auto
-        if excess <= 0:
-            return
-        drop = {e["id"] for e in auto[:excess]}
-        for fid in drop:
-            self._remove_files(fid)
-        self._entries = [e for e in self._entries if e["id"] not in drop]
-        self._save_index()
+        return {e["id"] for e in auto[:excess]} if excess > 0 else set()
 
     # ── read ──────────────────────────────────────────────────────────────
     def list(self) -> list:
@@ -158,8 +182,8 @@ class LogStore:
         with self._lock:
             if not self.get(fid):
                 return False
-            self._entries = [x for x in self._entries if x["id"] != fid]
-            self._save_index()
+            if not self._commit([x for x in self._entries if x["id"] != fid]):
+                return False
         self._remove_files(fid)
         return True
 
@@ -167,8 +191,8 @@ class LogStore:
         """Delete every saved frame. Returns how many were removed."""
         with self._lock:
             ids = [e["id"] for e in self._entries]
-            self._entries = []
-            self._save_index()
+            if not self._commit([]):
+                return 0
         for fid in ids:
             self._remove_files(fid)
         return len(ids)

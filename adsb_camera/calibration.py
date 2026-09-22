@@ -17,7 +17,6 @@ import json
 import logging
 import math
 import os
-import tempfile
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -28,6 +27,7 @@ from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
 from .aircraft import interp_track
+from .jsonfile import sweep_temp, write_json
 from .camera_model import MODELS, N_DIST, CameraModel, focal_from_hfov, project
 from .geo import LocalFrame
 
@@ -108,7 +108,8 @@ def trim_fixes(fixes: list, t: float) -> list:
 # ── persistence ────────────────────────────────────────────────────────────
 class CalibrationStore:
     def __init__(self, path: str):
-        self.path = path
+        self.path = os.path.abspath(path)
+        sweep_temp(os.path.dirname(self.path))
 
     def load(self) -> dict:
         if not os.path.exists(self.path):
@@ -137,12 +138,7 @@ class CalibrationStore:
         d = {"version": 1, "saved": time.time(), "site": asdict(site),
              "camera": camera.to_dict(), "points": [asdict(p) for p in points],
              "settings": settings}
-        folder = os.path.dirname(os.path.abspath(self.path))
-        os.makedirs(folder, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=folder, suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(d, fh, indent=1)
-        os.replace(tmp, self.path)
+        write_json(self.path, d)
 
 
 # ── geometry of observations ───────────────────────────────────────────────
