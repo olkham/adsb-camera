@@ -46,6 +46,14 @@ aircraft:
   stale_s: 30           # stop drawing an aircraft this long after its last position
   trail_s: 60
 
+tracking:               # how the LIVE view fills in between ADS-B positions (Tracking panel)
+  mode: kalman          # kalman | raw (straight line between fixes, dead reckoning past the last)
+  blend_s: 1.0          # ease each correction in over this long instead of jumping; 0 = jump
+  pos_noise_m: 100      # kalman: expected fix error, mostly timing jitter x speed. Higher = smoother
+  accel_noise: 5        # kalman: how hard aircraft manoeuvre, m/s^2. Higher = follows turns faster
+  vel_noise_ms: 5       # kalman: error in reported speed / heading / climb rate, m/s
+  use_velocity: true    # kalman: use the reported speed / heading / climb rate
+
 camera:
   # Starting guess until calibrated. For the Ximea 180° lens use:
   #   model: fisheye, hfov_deg: 180, pitch_deg: 90 (if it looks straight up)
@@ -65,6 +73,10 @@ overlay:
   reticle: true         # marker drawn on each in-view aircraft
   reticle_shape: circle # circle | square | cross | triangle
   reticle_size: 1.0     # bigger or smaller marker (0.3 - 4.0); also moves labels clear
+  pip: false            # picture-in-picture: magnified insets of the nearest aircraft in view
+  pip_count: 2          # 1 - 4 insets
+  pip_zoom: 4.0         # magnification relative to the stream (1.5 - 12)
+  pip_corner: top-right # top-right | top-left | bottom-right | bottom-left
 
 autodetect:             # experimental; toggle in the UI
   enabled: false

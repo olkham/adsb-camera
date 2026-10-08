@@ -26,7 +26,16 @@ an aircraft, say which one it is, and that's one correspondence
 | Principal point | 8 points |
 | Video ↔ ADS-B sync offset | 8 points on moving aircraft |
 | Distortion k2 (k3 for fisheye) | 10 (14) points |
-| Camera position correction | 15 points, opt-in |
+| Camera position correction (lat / lon / height) | 15 points, opt-in |
+
+Any of these can be **locked** with the padlock beside it in the Camera and
+Camera location panels: the solver then leaves that value exactly as it is and
+fits the rest. The camera location starts locked. To trust a phone's lat/lon
+but let the solver correct the height, unlock just the height. With 30
+simulated points, a height given 150 m too high comes back within 5 m, and
+lat/lon aren't touched. Locking some of yaw/pitch/roll (but not all three) fits
+the free angles on their own. Yaw and roll can't be told apart when the camera
+points straight up, so don't lock one of them there.
 
 The **sync offset** matters: ADS-B positions arrive 1–3 s late (readsb →
 `adsb2mqtt` publishes every 2 s) and video has its own latency. An airliner
@@ -177,7 +186,7 @@ near the edges. Two ways around that:
   aircraft data behind it to disk. Live streaming carries on. Come back later
   (even after the aircraft has gone), pick it out of the **Saved frames**
   timeline, and click its aircraft exactly as you would a frozen frame.
-- **Auto-log frames when aircraft enter view** (Overlay panel): watches for a
+- **Auto-log frames when aircraft enter view** (under Save frame): watches for a
   track entering the field of view and saves frames roughly once a second for
   five seconds either side of that moment, so a good pass through the frame is
   captured without you needing to catch it live.
@@ -204,13 +213,50 @@ Tips:
   mis-click. Untick or delete them and Solve again.
 - A **landmark** with known lat/lon/height (a mast, a church spire) can be
   added from the picker. Useful at night or for the first point.
-- If the camera gets knocked, tick **Keep lens fixed, re-aim only** in Solver,
-  clear the old points, and add 2–3 new ones; the lens model is kept.
+- If the camera gets knocked, tick **Keep lens fixed, re-aim only** in Solver
+  (it locks the field of view, lens centre and distortion), clear the old
+  points, and add 2–3 new ones; the lens model is kept.
 - **Add points automatically (experimental)**: once RMS is under ~10 px, the
   app looks for dark (day) or bright (night) blobs near each prediction and
   adds a point when the offset is stable while the aircraft moves. Detections
   far from a good prediction are ignored, and auto points the fit rejects are
   dropped on the next solve. Clear them with **Clear auto points**.
+
+---
+
+## Live tracking
+
+ADS-B positions arrive about once a second, and each one is late by a
+*varying* amount (readsb batches, adsb2mqtt publishes on a timer, MQTT
+queues). The overlay has to guess where each aircraft is in between. If it
+dead-reckons from one fix and snaps to the next, the marker jumps back every
+time a fix turns out more delayed than the one before. The **Tracking** panel
+controls how the live view fills in:
+
+- **Kalman filter** (default): a constant-velocity filter per aircraft, fed
+  each position and the aircraft's own reported speed, heading and climb
+  rate. The timing jitter shows up as position noise, which the filter
+  averages against the much steadier reported velocity.
+- **Straight line between fixes**: the previous behaviour, and what
+  calibration uses.
+- **Ease corrections over** *n* s (for either one): when a new fix changes
+  the estimate, the marker glides to the new track over about that long
+  instead of jumping.
+
+In `tests/test_tracker.py` (230 m/s, fixes 0.1–0.9 s late), the straight-line
+estimator jumps back up to ~150 m and averages 53 m off. The Kalman filter
+never steps back and averages 12 m off, and it stays ahead through a
+standard-rate turn too (26 m against 51 m). Frozen and saved frames always
+interpolate between the fixes either side, because once those are known it's
+the better estimate.
+
+**Picture-in-picture** (toggle under the picture; zoom, count and corner in
+Overlay) adds magnified insets of the nearest aircraft in view, cut from the
+full-resolution frame, so they have more detail than the stream they sit in.
+They are hidden while a frame is frozen, so a click always lands on the real
+image.
+
+---
 
 IPyCam's timestamp overlay doesn't interfere with calibration, but you may
 prefer to turn it off in IPyCam's Display settings since this app adds its own
@@ -268,7 +314,7 @@ detection, projection round-trips):
 | PATCH/DELETE | `/api/points/{id}` | Enable/disable, delete |
 | POST | `/api/solve` | Fit now |
 | POST | `/api/camera` `{yaw, pitch, roll, hfov, model, sync_offset_s}` | Manual adjust |
-| POST | `/api/site`, `/api/settings` | Location, overlay/solver options |
+| POST | `/api/site`, `/api/settings` | Location; overlay, solver (incl. `solve.locks`) and `tracking` options |
 | GET | `/api/calibration` | Download `calibration.json` |
 
 Interactive docs at `/api/docs`. `/api/state` gives every aircraft's `x, y`
@@ -301,6 +347,7 @@ adsb_camera/
   camera_model.py  pinhole / fisheye projection, orientation
   calibration.py   correspondences, staged robust solver, persistence
   scene.py         aircraft → pixels, sky grid, FOV outline
+  tracker.py       live position estimates: Kalman filter, correction easing
   overlay.py       OpenCV drawing
   autodetect.py    experimental automatic point collection
   logbook.py       saved frames for later calibration (manual + auto-log)

@@ -53,6 +53,14 @@ DEFAULTS: dict = {
         "trail_s": 60.0,
         "timeout_s": 90.0,
     },
+    "tracking": {                # live overlay only; also adjustable in the UI
+        "mode": "kalman",        # kalman | raw (straight line between fixes)
+        "blend_s": 1.0,          # ease corrections in over this long; 0 = snap
+        "pos_noise_m": 100.0,
+        "accel_noise": 5.0,
+        "vel_noise_ms": 5.0,
+        "use_velocity": True,
+    },
     "camera": {                  # starting guess, used until calibrated
         "model": "pinhole",      # pinhole | fisheye
         "hfov_deg": 70.0,
@@ -70,6 +78,10 @@ DEFAULTS: dict = {
         "reticle": True,        # marker drawn on each in-view aircraft
         "reticle_shape": "circle",   # circle | square | cross | triangle
         "reticle_size": 1.0,    # multiplier on the marker's size, 0.3 - 4.0
+        "pip": False,           # magnified insets of the nearest aircraft in view
+        "pip_count": 2,         # 1 - 4 insets
+        "pip_zoom": 4.0,        # magnification relative to the stream, 1.5 - 12
+        "pip_corner": "top-right",   # top-right | top-left | bottom-right | bottom-left
     },
     "autodetect": {
         "enabled": False,

@@ -28,7 +28,7 @@ from scipy.spatial.transform import Rotation
 
 from .aircraft import interp_track
 from .jsonfile import sweep_temp, write_json
-from .camera_model import MODELS, N_DIST, CameraModel, focal_from_hfov, project
+from .camera_model import MODELS, N_DIST, CameraModel, focal_from_hfov, project, ypr_to_c2w
 from .geo import LocalFrame
 
 log = logging.getLogger("adsb_camera.calibration")
@@ -191,35 +191,59 @@ def _kabsch(world_dirs: np.ndarray, cam_rays: np.ndarray) -> np.ndarray:
 
 
 # ── solver ─────────────────────────────────────────────────────────────────
+ROTATION = ("yaw", "pitch", "roll")
+POSITION = ("lon", "lat", "alt")      # ENU order: east, north, up
+LOCKABLE = ROTATION + ("f", "cxcy", "dist", "sync") + POSITION
+LENS = ("f", "cxcy", "dist")
+DEFAULT_LOCKS = {k: k in POSITION for k in LOCKABLE}   # the camera location is trusted
+
+
+def normalise_solve_opts(d: dict) -> dict:
+    """Solver settings with a full ``locks`` map, upgrading older settings:
+    ``lock_intrinsics`` locked the lens, ``solve_position`` unlocked the location,
+    and sync "off" is now the sync lock."""
+    out = {k: v for k, v in d.items() if k not in ("lock_intrinsics", "solve_position")}
+    locks = dict(DEFAULT_LOCKS)
+    locks.update({k: bool(v) for k, v in (d.get("locks") or {}).items() if k in LOCKABLE})
+    if d.get("lock_intrinsics"):
+        locks.update({k: True for k in LENS})
+    if d.get("solve_position"):
+        locks.update({k: False for k in POSITION})
+    if d.get("sync") == "off":
+        locks["sync"] = True
+        out["sync"] = "auto"
+    out["locks"] = locks
+    return out
+
+
 @dataclass
 class SolveOptions:
     model: str = "auto"            # auto | pinhole | fisheye
-    sync: str = "auto"             # auto | on | off
-    solve_position: bool = False
-    lock_intrinsics: bool = False  # rotation (+sync) only: re-aim a known camera
+    sync: str = "auto"             # auto | on  (fit when enough moving points / always)
+    locks: frozenset = frozenset(POSITION)   # LOCKABLE names held at their current value
     max_nfev: int = 400
 
 
 def choose_free(n: int, n_moving: int, model: str, opt: SolveOptions) -> list:
-    free = ["rot"]
-    if opt.lock_intrinsics:
-        if opt.sync == "on" or (opt.sync == "auto" and n_moving >= 6):
-            free.append("sync")
-        return free
-    if n >= 3:
+    """Parameters to fit, as the point count allows, minus the locked ones.
+    Rotation is "rot" when all three angles are free, else the free angles by name."""
+    lk = opt.locks
+    rot = [a for a in ROTATION if a not in lk]
+    free = ["rot"] if len(rot) == 3 else rot
+    if n >= 3 and "f" not in lk:
         free.append("f")
-    if n >= 6:
+    if n >= 6 and "dist" not in lk:
         free.append("k1")
-    if n >= 8:
+    if n >= 8 and "cxcy" not in lk:
         free.append("cxcy")
-    if n >= 10:
+    if n >= 10 and "dist" not in lk:
         free.append("k2")
-    if model == "fisheye" and n >= 14:
+    if model == "fisheye" and n >= 14 and "dist" not in lk:
         free.append("k3")
-    if opt.sync == "on" or (opt.sync == "auto" and n_moving >= 8):
+    if "sync" not in lk and (opt.sync == "on" or (opt.sync == "auto" and n_moving >= 8)):
         free.append("sync")
-    if opt.solve_position and n >= 15:
-        free.append("pos")
+    if n >= 15:
+        free += [k for k in POSITION if k not in lk]
     return free
 
 
@@ -229,13 +253,19 @@ class _Problem:
     def __init__(self, cam: CameraModel, obs: _Obs, free: list, prior_sync: float):
         self.cam, self.obs, self.free = cam, obs, free
         self.R_base = cam.R_c2w.copy()
+        self.ypr_base = cam.ypr()
+        # All three angles free: a rotation vector (no gimbal lock looking straight
+        # up). Some locked: the free Euler angles, in degrees, so the rest stay put.
+        self.euler = [j for j, a in enumerate(ROTATION) if a in free]
+        self.nrot = 3 if "rot" in free else len(self.euler)
         self.nk = sum(1 for k in ("k1", "k2", "k3") if k in free)
+        self.pos_axes = [j for j, k in enumerate(POSITION) if k in free]
         self.prior_sync = prior_sync
         self.penalty = float(max(cam.width, cam.height))
 
     def x0(self) -> np.ndarray:
         c = self.cam
-        x = [0.0, 0.0, 0.0]
+        x = [0.0] * self.nrot
         if "f" in self.free:
             x.append(math.log(c.f))
         if "cxcy" in self.free:
@@ -243,14 +273,21 @@ class _Problem:
         x += list(c.dist[: self.nk])
         if "sync" in self.free:
             x.append(c.sync_offset_s)
-        if "pos" in self.free:
-            x += [0.0, 0.0, 0.0]
+        x += [0.0] * len(self.pos_axes)
         return np.array(x, float)
 
     def unpack(self, x):
         c = self.cam
-        i = 3
-        R = Rotation.from_rotvec(x[:3]).as_matrix() @ self.R_base
+        i = self.nrot
+        if "rot" in self.free:
+            R = Rotation.from_rotvec(x[:3]).as_matrix() @ self.R_base
+        elif self.euler:
+            ypr = list(self.ypr_base)
+            for k, j in enumerate(self.euler):
+                ypr[j] += x[k]
+            R = ypr_to_c2w(*ypr)
+        else:
+            R = self.R_base
         f = c.f
         if "f" in self.free:
             f = math.exp(x[i]); i += 1
@@ -264,8 +301,8 @@ class _Problem:
         if "sync" in self.free:
             tau = x[i]; i += 1
         pos = np.zeros(3)
-        if "pos" in self.free:
-            pos = np.array(x[i:i + 3]); i += 3
+        for j in self.pos_axes:
+            pos[j] = x[i]; i += 1
         return R, f, cx, cy, dist, tau, pos
 
     def residuals(self, x):
@@ -284,8 +321,8 @@ class _Problem:
             res.append(40.0 * np.array(dist[: self.nk]))
         if "sync" in self.free:
             res.append(np.array([1.0 * (tau - self.prior_sync)]))
-        if "pos" in self.free:
-            res.append(pos / 100.0)
+        if self.pos_axes:
+            res.append(pos[self.pos_axes] / 100.0)
         return np.concatenate(res)
 
     def apply(self, x) -> CameraModel:
@@ -300,7 +337,7 @@ def _fit(cam, obs, free, prior_sync, f_scale, max_nfev):
     x0 = prob.x0()
     bounds_lo = np.full_like(x0, -np.inf)
     bounds_hi = np.full_like(x0, np.inf)
-    i = 3
+    i = prob.nrot
     if "f" in free:
         bounds_lo[i], bounds_hi[i] = math.log(cam.width * 0.05), math.log(cam.width * 20)
         i += 1
@@ -313,8 +350,8 @@ def _fit(cam, obs, free, prior_sync, f_scale, max_nfev):
     if "sync" in free:
         bounds_lo[i], bounds_hi[i] = -8.0, 15.0
         i += 1
-    if "pos" in free:
-        bounds_lo[i:i + 3], bounds_hi[i:i + 3] = -3000.0, 3000.0
+    n_pos = len(prob.pos_axes)
+    bounds_lo[i:i + n_pos], bounds_hi[i:i + n_pos] = -3000.0, 3000.0
     x0 = np.clip(x0, bounds_lo + 1e-9, bounds_hi - 1e-9)
     sol = least_squares(prob.residuals, x0, bounds=(bounds_lo, bounds_hi), loss="soft_l1",
                         f_scale=f_scale, x_scale="jac", max_nfev=max_nfev)
@@ -373,8 +410,9 @@ def solve(cam: CameraModel, points: list, site: Site, opt: SolveOptions) -> dict
     n = len(obs.ids)
     if n < 2:
         return {"ok": False, "message": f"Need at least 2 usable points (have {n})."}
-    if opt.lock_intrinsics:
-        models = [cam.model]
+    lk = opt.locks
+    if "f" in lk or "dist" in lk:
+        models = [cam.model]        # another lens model would change the locked values
     elif opt.model == "auto":
         # Too few points to tell lens models apart: keep the current one.
         models = list(MODELS) if n >= 8 else [cam.model]
@@ -383,22 +421,37 @@ def solve(cam: CameraModel, points: list, site: Site, opt: SolveOptions) -> dict
     n_moving = int(obs.moving.sum())
     t0 = time.time()
 
+    if not choose_free(n, n_moving, cam.model, opt):
+        return {"ok": False, "message": "Everything is locked, so there is nothing to fit."}
+
+    rot_locked = [a in lk for a in ROTATION]
     results = []
     for model in models:
         free = choose_free(n, n_moving, model, opt)
         base = cam if (cam.model == model) else cam.with_model(model)
         cands = [base.copy()]
-        if not opt.lock_intrinsics:
+        if "f" not in lk:
             dirs = obs.P0 / np.linalg.norm(obs.P0, axis=1, keepdims=True)
             for hfov in FOV_GUESSES[model]:
                 c = CameraModel.default(cam.width, cam.height, model, hfov)
                 c.sync_offset_s = tau0
+                if "cxcy" in lk:
+                    c.cx, c.cy = base.cx, base.cy
+                if "dist" in lk:
+                    c.dist = list(base.dist)
                 c.R_c2w = _kabsch(dirs, c.unproject(obs.uv)).T
+                if any(rot_locked):
+                    ypr = [b if locked else a for a, b, locked
+                           in zip(c.ypr(), base.ypr(), rot_locked)]
+                    c.set_ypr(*ypr)
                 cands.append(c)
         # Coarse: rotation (+f) only, loose robust scale, from every candidate.
-        coarse_free = ["rot"] + (["f"] if "f" in free else [])
+        coarse_free = [k for k in free if k in ("rot",) + ROTATION + ("f",)]
         best = None
         for c in cands:
+            if not coarse_free:
+                best = (c, 0.0)
+                break
             try:
                 fc, _, sol = _fit(c, obs, coarse_free, tau0, 0.02 * cam.width, 150)
             except (ValueError, np.linalg.LinAlgError):
@@ -433,7 +486,7 @@ def solve(cam: CameraModel, points: list, site: Site, opt: SolveOptions) -> dict
     new_cam.calibrated = math.isfinite(rms)
     new_cam.rms_px = rms
     new_site = None
-    if "pos" in free and np.linalg.norm(pos) > 0.5:
+    if any(k in free for k in POSITION) and np.linalg.norm(pos) > 0.5:
         new_site = _shift_site(site, pos)
     msg = (f"{model}, {n} points, RMS {rms:.1f}px, fitted: {', '.join(free)}"
            + (f"; {len(outliers)} likely wrong" if outliers else ""))

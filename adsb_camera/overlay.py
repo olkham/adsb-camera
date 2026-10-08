@@ -194,6 +194,74 @@ def draw_aircraft(img, scene, s, ui, opts):
                 _text(img, txt, (tx, ty), fs * 0.8, color, th)
 
 
+PIP_CORNERS = ("top-right", "top-left", "bottom-right", "bottom-left")
+
+
+def _clamped(opts, key, lo, hi, default):
+    try:
+        v = float(opts.get(key, default))
+    except (TypeError, ValueError):
+        return default
+    return min(hi, max(lo, v)) if math.isfinite(v) else default
+
+
+def draw_pip(img, frame, scene, s, ui, opts, below_hud=False):
+    """Magnified insets of the nearest aircraft in view, stacked from a corner.
+
+    Cut from the full-resolution ``frame`` (no overlay on it), so the inset has
+    more detail than the stream it sits in when the stream is downscaled."""
+    views = [a for a in scene if a["in_view"] and a["uv"] is not None]
+    if not views:
+        return
+    count = int(_clamped(opts, "pip_count", 1, 4, 2))
+    zoom = _clamped(opts, "pip_zoom", 1.5, 12.0, 4.0)
+    corner = opts.get("pip_corner", "top-right")
+    corner = corner if corner in PIP_CORNERS else "top-right"
+    H, W = img.shape[:2]
+    fh, fw = frame.shape[:2]
+    th = max(1, int(round(ui)))
+    size = int(max(96, min(W, H) * 0.24))
+    margin, gap = int(10 * ui), int(8 * ui)
+    top0 = margin + (int(30 * ui) if below_hud and corner == "top-left" else 0)
+    crop = max(8, int(round(size / (zoom * s))))    # source pixels across
+    right, top = corner.endswith("right"), corner.startswith("top")
+    x0 = W - margin - size if right else margin
+
+    for k, a in enumerate(sorted(views, key=lambda a: a["range_km"])[:count]):
+        y0 = top0 + k * (size + gap) if top else H - margin - size - k * (size + gap)
+        if y0 < 0 or y0 + size > H:
+            break
+        u, v = a["uv"]
+        x1, y1 = int(round(u - crop / 2)), int(round(v - crop / 2))
+        x2, y2 = x1 + crop, y1 + crop
+        sub = frame[max(0, y1):min(fh, y2), max(0, x1):min(fw, x2)]
+        if sub.size == 0:
+            continue
+        pad = (max(0, -y1), max(0, y2 - fh), max(0, -x1), max(0, x2 - fw))
+        if any(pad):   # near the edge: keep the aircraft centred, fill with black
+            sub = cv2.copyMakeBorder(sub, *pad, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+        img[y0:y0 + size, x0:x0 + size] = cv2.resize(
+            sub, (size, size), interpolation=cv2.INTER_CUBIC if size > crop else cv2.INTER_AREA)
+
+        color = (0, 0, 255) if a["emergency"] else _bgr(a["rgb"])
+        # Ticks around the predicted position, leaving the aircraft itself clear.
+        c, g, L = x0 + size // 2, int(size * 0.08), int(size * 0.07)
+        cy = y0 + size // 2
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            p1 = (c + dx * g, cy + dy * g)
+            p2 = (c + dx * (g + L), cy + dy * (g + L))
+            cv2.line(img, p1, p2, (0, 0, 0), th + 2, cv2.LINE_AA)
+            cv2.line(img, p1, p2, color, th, cv2.LINE_AA)
+        # Caption on a dark strip along the bottom of the inset.
+        lh = int(20 * ui)
+        strip = img[y0 + size - lh:y0 + size, x0:x0 + size]
+        strip[:] = (strip * 0.35).astype(strip.dtype)
+        txt = f"{a['callsign'] or a['icao']}  {_alt_text(a)}  {a['range_km']:.0f}km"
+        _text(img, txt, (x0 + int(5 * ui), y0 + size - int(6 * ui)), 0.45 * ui, color, th)
+        cv2.rectangle(img, (x0 - 1, y0 - 1), (x0 + size, y0 + size), (0, 0, 0), th + 2)
+        cv2.rectangle(img, (x0 - 1, y0 - 1), (x0 + size, y0 + size), color, th + 1)
+
+
 def draw_points(img, points, s, ui):
     th = max(1, int(round(ui)))
     r = int(7 * ui)

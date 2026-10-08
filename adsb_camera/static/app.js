@@ -96,6 +96,7 @@
       renderTimeline();
     }
 
+    $("pointsCount").textContent = s.points.length || "";
     renderPoints(s.points);
     renderSliders(cam);
     renderSettings(s);
@@ -184,7 +185,7 @@
               ${f.source === "manual" ? `<span class="shot-pin" title="Saved by hand"></span>` : ""}
             </button>`;
           }).join("")
-        : `<p class="empty">No saved frames yet. Use "Save frame", or turn on auto-logging in Overlay.</p>`;
+        : `<p class="empty">No saved frames yet. Use "Save frame", or turn on auto-logging under it.</p>`;
       framesSig = sig;
       strip.scrollLeft = wasAtEnd ? strip.scrollWidth : keepLeft;
     }
@@ -286,9 +287,9 @@
       $("o_" + k).textContent = d.fmt(dragging.has(k) ? Number(el.value) : v);
     }
     if (document.activeElement !== $("camModel")) $("camModel").value = cam.model;
-    const k = cam.dist.map((x) => x.toFixed(3)).join(", ");
-    $("camInfo").textContent =
-      `Vertical FOV ${fmt(cam.vfov)}°, focal ${fmt(cam.f, 0)} px, centre ${fmt(cam.cx, 0)}, ${fmt(cam.cy, 0)}, distortion [${k}]`;
+    $("o_centre").textContent = `${fmt(cam.cx, 0)}, ${fmt(cam.cy, 0)}`;
+    $("o_dist").textContent = cam.dist.map((x) => x.toFixed(3)).join(", ");
+    $("camInfo").textContent = `Vertical FOV ${fmt(cam.vfov)}°, focal ${fmt(cam.f, 0)} px`;
   }
   let camTimer = null;
   for (const [k, d] of Object.entries(SL)) {
@@ -316,14 +317,18 @@
     setIfIdle("optModel", st.solve.model);
     setIfIdle("optSync", st.solve.sync);
     setIfIdle("optAuto", !!st.solve.auto_solve, "checked");
-    setIfIdle("optLock", !!st.solve.lock_intrinsics, "checked");
-    setIfIdle("optPos", !!st.solve.solve_position, "checked");
     setIfIdle("maxRange", st.max_range_km);
     setIfIdle("autodetect", !!st.autodetect, "checked");
     setIfIdle("autolog", !!st.autolog, "checked");
     setIfIdle("reticleShape", st.overlay.reticle_shape);
     setIfIdle("reticleSize", st.overlay.reticle_size ?? 1);
     $("o_reticleSize").textContent = `${Number($("reticleSize").value).toFixed(1)}×`;
+    setIfIdle("pipZoom", st.overlay.pip_zoom ?? 4);
+    $("o_pipZoom").textContent = `${Number($("pipZoom").value).toFixed(1)}×`;
+    setIfIdle("pipCount", String(st.overlay.pip_count ?? 2));
+    setIfIdle("pipCorner", st.overlay.pip_corner || "top-right");
+    renderLocks(st.solve.locks || {});
+    renderTracking(st.tracking);
   }
   document.querySelectorAll("[data-ov]").forEach((cb) =>
     cb.addEventListener("change", () => api("POST", "/api/settings", { overlay: { [cb.dataset.ov]: cb.checked } })));
@@ -332,8 +337,6 @@
   solveSetting("optModel", "model");
   solveSetting("optSync", "sync");
   solveSetting("optAuto", "auto_solve", "checked");
-  solveSetting("optLock", "lock_intrinsics", "checked");
-  solveSetting("optPos", "solve_position", "checked");
   $("maxRange").addEventListener("change", (e) => api("POST", "/api/settings", { max_range_km: Number(e.target.value) }));
   $("autodetect").addEventListener("change", (e) => api("POST", "/api/settings", { autodetect: e.target.checked }));
   $("autolog").addEventListener("change", (e) => api("POST", "/api/settings", { autolog: e.target.checked }));
@@ -345,6 +348,94 @@
     $("o_reticleSize").textContent = `${v.toFixed(1)}×`;
     clearTimeout(reticleTimer);
     reticleTimer = setTimeout(() => api("POST", "/api/settings", { overlay: { reticle_size: v } }), 80);
+  });
+  let pipTimer = null;
+  $("pipZoom").addEventListener("input", (e) => {
+    const v = Number(e.target.value);
+    $("o_pipZoom").textContent = `${v.toFixed(1)}×`;
+    clearTimeout(pipTimer);
+    pipTimer = setTimeout(() => api("POST", "/api/settings", { overlay: { pip_zoom: v } }), 80);
+  });
+  $("pipCount").addEventListener("change", (e) => api("POST", "/api/settings", { overlay: { pip_count: Number(e.target.value) } }));
+  $("pipCorner").addEventListener("change", (e) => api("POST", "/api/settings", { overlay: { pip_corner: e.target.value } }));
+
+  // ── locks: values the solver must leave alone ──────────────────────────
+  const LOCK_SVG = `<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6">
+    <rect x="2.5" y="7" width="11" height="7.5" rx="1.5" fill="currentColor" stroke="none"/>
+    <path class="shut" d="M5 7V5a3 3 0 0 1 6 0v2"/><path class="open" d="M5 7V5a3 3 0 0 1 5.8-1.1"/></svg>`;
+  const LOCK_NAMES = { yaw: "yaw", pitch: "pitch", roll: "roll", f: "field of view", sync: "sync offset",
+    cxcy: "lens centre", dist: "distortion", lat: "latitude", lon: "longitude", alt: "height" };
+  const LENS = ["f", "cxcy", "dist"];
+  let locks = {};
+  document.querySelectorAll("button.lock").forEach((b) => {
+    b.innerHTML = LOCK_SVG;
+    b.setAttribute("aria-pressed", "false");
+    b.addEventListener("click", () => setLocks({ [b.dataset.lock]: b.getAttribute("aria-pressed") !== "true" }));
+  });
+  function renderLocks(lk) {
+    locks = lk;
+    document.querySelectorAll("button.lock").forEach((b) => {
+      const on = !!lk[b.dataset.lock], what = LOCK_NAMES[b.dataset.lock];
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+      b.title = on ? `Locked: solving keeps the ${what} as it is. Click to let the solver fit it.`
+                   : `Solving fits the ${what}. Click to keep it as it is.`;
+      b.setAttribute("aria-label", `Lock ${what}`);
+    });
+    const n = LENS.filter((k) => lk[k]).length;
+    const ol = $("optLock");
+    ol.checked = n === LENS.length;
+    ol.indeterminate = n > 0 && n < LENS.length;
+    $("optSync").disabled = !!lk.sync;
+    $("optSync").title = lk.sync ? "The sync offset is locked (Camera panel)" : "";
+  }
+  async function setLocks(change) {
+    renderLocks({ ...locks, ...change });             // show it at once
+    await api("POST", "/api/settings", { solve: { locks: change } });
+    refresh();
+  }
+  $("optLock").addEventListener("change", (e) =>
+    setLocks(Object.fromEntries(LENS.map((k) => [k, e.target.checked]))));
+
+  // ── tracking: how the live view fills in between ADS-B positions ───────
+  const TRK = {
+    blend_s: (v) => (v > 0 ? `${v.toFixed(1)} s` : "off"),
+    pos_noise_m: (v) => `${Math.round(v)} m`,
+    accel_noise: (v) => `${v.toFixed(1)} m/s²`,
+    vel_noise_ms: (v) => `${v.toFixed(1)} m/s`,
+  };
+  let trkDefaults = null, trkTimer = null;
+  function renderTracking(t) {
+    if (!t) return;
+    trkDefaults = state.settings.tracking_defaults;
+    const setIfIdle = (el, v, prop = "value") => { if (document.activeElement !== el) el[prop] = v; };
+    setIfIdle($("trkMode"), t.mode);
+    setIfIdle($("trkVel"), !!t.use_velocity, "checked");
+    for (const [k, f] of Object.entries(TRK)) {
+      const el = $("trk_" + k);
+      if (!dragging.has("trk_" + k)) el.value = t[k];
+      $("o_trk_" + k).textContent = f(Number(el.value));
+    }
+    const kf = t.mode === "kalman";
+    document.querySelectorAll("#trackPanel .kf").forEach((el) => {
+      el.classList.toggle("is-disabled", !kf);
+      el.querySelectorAll("input").forEach((i) => (i.disabled = !kf));
+    });
+  }
+  const sendTracking = (d) => api("POST", "/api/settings", { tracking: d });
+  for (const [k, f] of Object.entries(TRK)) {
+    const el = $("trk_" + k);
+    el.addEventListener("pointerdown", () => dragging.add("trk_" + k));
+    el.addEventListener("pointerup", () => setTimeout(() => dragging.delete("trk_" + k), 400));
+    el.addEventListener("input", () => {
+      $("o_trk_" + k).textContent = f(Number(el.value));
+      clearTimeout(trkTimer);
+      trkTimer = setTimeout(() => sendTracking({ [k]: Number(el.value) }), 120);
+    });
+  }
+  $("trkMode").addEventListener("change", async (e) => { await sendTracking({ mode: e.target.value }); refresh(); });
+  $("trkVel").addEventListener("change", (e) => sendTracking({ use_velocity: e.target.checked }));
+  $("btnTrkReset").addEventListener("click", async () => {
+    if (trkDefaults) { await sendTracking(trkDefaults); refresh(); }
   });
 
   // ── site ───────────────────────────────────────────────────────────────

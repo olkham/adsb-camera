@@ -18,15 +18,21 @@ import numpy as np
 
 from .aircraft import AircraftStore, MqttFeed
 from .autodetect import AutoRefiner
-from .calibration import (CalibrationStore, Correspondence, Site, SolveOptions, evaluate,
-                          predict, solve, trim_fixes)
+from .calibration import (LOCKABLE, CalibrationStore, Correspondence, Site, SolveOptions,
+                          evaluate, normalise_solve_opts, predict, solve, trim_fixes)
 from .camera_model import MODELS, CameraModel
 from .logbook import LogStore
-from .overlay import RETICLE_SHAPES, draw_aircraft, draw_grid, draw_hud, draw_points, placeholder
+from .overlay import (PIP_CORNERS, RETICLE_SHAPES, draw_aircraft, draw_grid, draw_hud, draw_pip,
+                      draw_points, placeholder)
 from .scene import compute_scene, fov_outline, sky_grid
+from .tracker import Tracker, clean_settings as clean_tracking
 from .video import VideoSource
 
 log = logging.getLogger("adsb_camera")
+
+# Numeric overlay settings: (min, max, type). Out-of-range values are clamped.
+NUMERIC_OVERLAY = {"reticle_size": (0.3, 4.0, float), "pip_zoom": (1.5, 12.0, float),
+                   "pip_count": (1, 4, round)}
 
 
 def _num(v) -> Optional[float]:
@@ -54,8 +60,11 @@ class AdsbCamera:
 
         st = saved.get("settings", {})
         self.overlay = {**cfg["overlay"], **st.get("overlay", {})}
-        self.solve_opts = {"model": "auto", "sync": "auto", "solve_position": False,
-                           "lock_intrinsics": False, "auto_solve": True, **st.get("solve", {})}
+        self.solve_opts = normalise_solve_opts({"model": "auto", "sync": "auto", "auto_solve": True,
+                                                **st.get("solve", {})})
+        self.tracking_defaults = clean_tracking(cfg["tracking"])
+        self.tracker = Tracker(clean_tracking(st.get("tracking"), self.tracking_defaults),
+                               coast_s=float(acfg["stale_s"]))
         self.max_range_km = float(st.get("max_range_km", acfg["max_range_km"]))
         self.autodetect_enabled = bool(st.get("autodetect_enabled", cfg["autodetect"]["enabled"]))
 
@@ -137,7 +146,7 @@ class AdsbCamera:
         try:
             self.calib_store.save(self.site, self.camera, self.points, {
                 "overlay": self.overlay, "solve": self.solve_opts,
-                "max_range_km": self.max_range_km, "autodetect_enabled": self.autodetect_enabled,
+                "tracking": self.tracker.settings, "max_range_km": self.max_range_km, "autodetect_enabled": self.autodetect_enabled,
                 "autolog_enabled": self.autolog_enabled})
         except OSError as e:
             log.error("Could not save calibration: %s", e)
@@ -205,9 +214,12 @@ class AdsbCamera:
             opts = dict(self.overlay)
 
         frame_enu = self._site_frame()
+        # Live frames go through the tracker; a frozen or saved frame interpolates
+        # between the fixes either side, as calibration does.
+        estimate = None if frozen or frame_enu is None else self.tracker.estimator(frame_enu)
         scene = [] if frame_enu is None else compute_scene(
             cam, frame_enu, snap, t, self.max_range_km, acfg["stale_s"], acfg["trail_s"],
-            with_trails=want_image and opts.get("trails", True))
+            with_trails=want_image and opts.get("trails", True), estimate=estimate)
         self.scene = scene
 
         if (self.autodetect_enabled and not frozen and cam.calibrated
@@ -231,6 +243,8 @@ class AdsbCamera:
         if opts.get("points") or frozen:
             draw_points(img, self._points_for_overlay(cam), s, ui)
         draw_aircraft(img, scene, s, ui, opts)
+        if opts.get("pip") and not frozen:   # insets would get in the way of clicking
+            draw_pip(img, frame, scene, s, ui, opts, below_hud=bool(opts.get("hud")))
         if opts.get("hud"):
             draw_hud(img, self._hud_lines(cam, scene), ui, frozen=bool(frozen))
         elif frozen:
@@ -504,15 +518,14 @@ class AdsbCamera:
 
     def _run_solve(self, overrides: Optional[dict] = None) -> dict:
         with self.lock:
-            opts = {**self.solve_opts, **(overrides or {})}
+            opts = normalise_solve_opts({**self.solve_opts, **(overrides or {})})
             cam, site = self.camera.copy(), Site(**asdict(self.site))
             for p in self.points:
                 if p.kind == "aircraft" and time.time() - p.t < 600:
                     p.merge_fixes(self.store.fixes_for(p.icao))
             pts = list(self.points)
         opt = SolveOptions(model=opts.get("model", "auto"), sync=opts.get("sync", "auto"),
-                           solve_position=bool(opts.get("solve_position")),
-                           lock_intrinsics=bool(opts.get("lock_intrinsics")))
+                           locks=frozenset(k for k, v in opts["locks"].items() if v))
         try:
             res = solve(cam, pts, site, opt)
             # Auto-added points that the fit rejects are dropped (once);
@@ -613,16 +626,32 @@ class AdsbCamera:
                 if k == "reticle_shape":
                     if v in RETICLE_SHAPES:
                         self.overlay[k] = v
-                elif k == "reticle_size":
+                elif k == "pip_corner":
+                    if v in PIP_CORNERS:
+                        self.overlay[k] = v
+                elif k in NUMERIC_OVERLAY:
+                    lo, hi, kind = NUMERIC_OVERLAY[k]
                     try:
-                        self.overlay[k] = min(4.0, max(0.3, float(v)))
-                    except (TypeError, ValueError):
-                        pass
+                        x = kind(float(v))
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                    if math.isfinite(x):
+                        self.overlay[k] = min(hi, max(lo, x))
                 elif k in self.overlay:
                     self.overlay[k] = bool(v)
             for k, v in (d.get("solve") or {}).items():
-                if k in self.solve_opts:
+                if k == "locks" and isinstance(v, dict):
+                    self.solve_opts["locks"].update(
+                        {n: bool(x) for n, x in v.items() if n in LOCKABLE})
+                elif k == "sync":
+                    if v in ("auto", "on"):
+                        self.solve_opts[k] = v
+                    elif v == "off":            # older clients: now the sync lock
+                        self.solve_opts["locks"]["sync"] = True
+                elif k in self.solve_opts:
                     self.solve_opts[k] = v
+            if isinstance(d.get("tracking"), dict):
+                self.tracker.configure(d["tracking"])
             if "max_range_km" in d:
                 self.max_range_km = max(1.0, float(d["max_range_km"]))
             if "autodetect" in d:
@@ -640,7 +669,10 @@ class AdsbCamera:
             outliers = set(self.last_solve.get("outliers") or [])
             for p in pts:
                 p["outlier"] = p["id"] in outliers
-            settings = {"overlay": dict(self.overlay), "solve": dict(self.solve_opts),
+            settings = {"overlay": dict(self.overlay),
+                        "solve": {**self.solve_opts, "locks": dict(self.solve_opts["locks"])},
+                        "tracking": dict(self.tracker.settings),
+                        "tracking_defaults": dict(self.tracking_defaults),
                         "max_range_km": self.max_range_km, "autodetect": self.autodetect_enabled,
                         "autolog": self.autolog_enabled}
             last_solve = dict(self.last_solve)

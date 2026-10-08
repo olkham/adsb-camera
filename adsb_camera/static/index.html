@@ -23,6 +23,16 @@
       <canvas id="loupe" class="loupe" width="200" height="200" hidden></canvas>
       <div id="picker" class="picker" hidden role="dialog" aria-label="Which aircraft is this?"></div>
     </div>
+    <div class="overlay-bar" role="group" aria-label="Overlay">
+      <label class="chip"><input type="checkbox" data-ov="labels"> Labels</label>
+      <label class="chip"><input type="checkbox" data-ov="trails"> Trails</label>
+      <label class="chip"><input type="checkbox" data-ov="grid"> Sky grid</label>
+      <label class="chip"><input type="checkbox" data-ov="offscreen"> Edge arrows</label>
+      <label class="chip"><input type="checkbox" data-ov="reticle"> Reticle</label>
+      <label class="chip"><input type="checkbox" data-ov="pip"> Picture-in-picture</label>
+      <label class="chip"><input type="checkbox" data-ov="points"> Calibration points</label>
+      <label class="chip"><input type="checkbox" data-ov="hud"> Status line</label>
+    </div>
     <p id="hint" class="hint"></p>
   </section>
 
@@ -39,12 +49,14 @@
       </label>
     </header>
 
-    <section class="panel" id="calibrate">
+    <details class="panel" id="calibrate" open>
+      <summary>Calibration <span id="pointsCount" class="count"></span></summary>
       <div class="row gap">
         <button id="btnFreeze" class="primary" title="Space">Freeze frame</button>
         <button id="btnSave" title="Save this frame and its aircraft data to calibrate from later">Save frame</button>
         <button id="btnSolve" title="Fit the camera to the points">Solve</button>
       </div>
+      <label class="check" title="Saves frames a few seconds either side of a track entering the view, to calibrate from later in Saved frames"><input type="checkbox" id="autolog"> Auto-log frames when aircraft enter view</label>
       <p id="viewingMsg" class="solve-msg" hidden></p>
       <p id="solveMsg" class="solve-msg"></p>
       <ol id="points" class="points"></ol>
@@ -52,14 +64,17 @@
         <button id="btnClearAuto" class="quiet">Clear auto points</button>
         <button id="btnClearAll" class="quiet danger">Clear all points</button>
       </div>
-    </section>
+    </details>
 
     <section class="panel sky-panel">
-      <h2>Sky</h2>
+      <div class="panel-head">
+        <h2>Sky</h2>
+        <label class="inline">Max range<input id="maxRange" type="number" min="1" max="500" step="1"> km</label>
+      </div>
       <canvas id="sky" width="340" height="340" aria-label="Aircraft positions by azimuth and elevation, with the camera's field of view"></canvas>
     </section>
 
-    <details class="panel" id="framesPanel" open>
+    <details class="panel" id="framesPanel">
       <summary>Saved frames <span id="framesCount" class="count"></span></summary>
       <p class="fine">Scrub the timeline to find a frame, then click the aircraft in it to add calibration points.</p>
       <div id="filmstrip" class="filmstrip" tabindex="0" role="listbox" aria-label="Saved frames, oldest first"></div>
@@ -74,14 +89,16 @@
       </div>
     </details>
 
-    <details class="panel" id="cameraPanel" open>
+    <details class="panel" id="cameraPanel">
       <summary>Camera</summary>
       <div class="sliders">
-        <label>Yaw <output id="o_yaw"></output><input type="range" id="s_yaw" min="0" max="360" step="0.1"></label>
-        <label>Pitch <output id="o_pitch"></output><input type="range" id="s_pitch" min="-90" max="90" step="0.1"></label>
-        <label>Roll <output id="o_roll"></output><input type="range" id="s_roll" min="-180" max="180" step="0.1"></label>
-        <label>Horizontal FOV <output id="o_hfov"></output><input type="range" id="s_hfov" min="5" max="240" step="0.1"></label>
-        <label>Sync offset <output id="o_sync"></output><input type="range" id="s_sync" min="-5" max="10" step="0.05"></label>
+        <div class="sl"><label for="s_yaw">Yaw</label><output id="o_yaw"></output><button class="lock" data-lock="yaw"></button><input type="range" id="s_yaw" min="0" max="360" step="0.1"></div>
+        <div class="sl"><label for="s_pitch">Pitch</label><output id="o_pitch"></output><button class="lock" data-lock="pitch"></button><input type="range" id="s_pitch" min="-90" max="90" step="0.1"></div>
+        <div class="sl"><label for="s_roll">Roll</label><output id="o_roll"></output><button class="lock" data-lock="roll"></button><input type="range" id="s_roll" min="-180" max="180" step="0.1"></div>
+        <div class="sl"><label for="s_hfov">Horizontal FOV</label><output id="o_hfov"></output><button class="lock" data-lock="f"></button><input type="range" id="s_hfov" min="5" max="240" step="0.1"></div>
+        <div class="sl"><label for="s_sync">Sync offset</label><output id="o_sync"></output><button class="lock" data-lock="sync"></button><input type="range" id="s_sync" min="-5" max="10" step="0.05"></div>
+        <div class="sl"><span>Lens centre</span><output id="o_centre"></output><button class="lock" data-lock="cxcy"></button></div>
+        <div class="sl"><span>Distortion</span><output id="o_dist"></output><button class="lock" data-lock="dist"></button></div>
       </div>
       <div class="row gap">
         <label class="inline">Lens
@@ -95,12 +112,13 @@
     <details class="panel" id="sitePanel">
       <summary>Camera location</summary>
       <div class="grid2">
-        <label>Latitude<input id="siteLat" inputmode="decimal"></label>
-        <label>Longitude<input id="siteLon" inputmode="decimal"></label>
-        <label>Height above sea level (m)<input id="siteAlt" inputmode="decimal"></label>
-        <label>Geoid offset (m)<input id="siteGeoid" inputmode="decimal"></label>
+        <div class="field"><span class="field-head"><label for="siteLat">Latitude</label><button class="lock" data-lock="lat"></button></span><input id="siteLat" inputmode="decimal"></div>
+        <div class="field"><span class="field-head"><label for="siteLon">Longitude</label><button class="lock" data-lock="lon"></button></span><input id="siteLon" inputmode="decimal"></div>
+        <div class="field"><span class="field-head"><label for="siteAlt">Height above sea level (m)</label><button class="lock" data-lock="alt"></button></span><input id="siteAlt" inputmode="decimal"></div>
+        <div class="field"><span class="field-head"><label for="siteGeoid">Geoid offset (m)</label></span><input id="siteGeoid" inputmode="decimal"></div>
       </div>
       <button id="btnSite">Save location</button>
+      <p class="fine">Unlock any of latitude, longitude or height to let the solver refine it once there are 15 or more points.</p>
     </details>
 
     <details class="panel">
@@ -109,24 +127,32 @@
         <select id="optModel"><option value="auto">Pick automatically</option><option value="pinhole">Standard</option><option value="fisheye">Fisheye</option></select>
       </label>
       <label class="inline">Sync offset
-        <select id="optSync"><option value="auto">Fit when enough points</option><option value="on">Always fit</option><option value="off">Keep fixed</option></select>
+        <select id="optSync"><option value="auto">Fit when enough points</option><option value="on">Always fit</option></select>
       </label>
       <label class="check"><input type="checkbox" id="optAuto"> Solve after each new point</label>
       <label class="check"><input type="checkbox" id="optLock"> Keep lens fixed, re-aim only</label>
-      <label class="check"><input type="checkbox" id="optPos"> Refine camera location (15+ points)</label>
+      <p class="fine">The lock buttons beside each value in Camera and Camera location keep that value fixed when solving. "Keep lens fixed" locks the field of view, lens centre and distortion together.</p>
+    </details>
+
+    <details class="panel" id="trackPanel">
+      <summary>Tracking</summary>
+      <p class="fine">ADS-B positions arrive about once a second, each a little late by a varying amount. This is how the live view fills in between them. Frozen and saved frames always use the positions either side.</p>
+      <label class="inline">Estimator
+        <select id="trkMode"><option value="kalman">Kalman filter</option><option value="raw">Straight line between fixes</option></select>
+      </label>
+      <div class="sliders">
+        <div class="sl"><label for="trk_blend_s">Ease corrections over</label><output id="o_trk_blend_s"></output><input type="range" id="trk_blend_s" data-trk="blend_s" min="0" max="5" step="0.1"></div>
+        <div class="sl kf"><label for="trk_pos_noise_m">Position noise</label><output id="o_trk_pos_noise_m"></output><input type="range" id="trk_pos_noise_m" data-trk="pos_noise_m" min="5" max="500" step="5"></div>
+        <div class="sl kf"><label for="trk_accel_noise">Manoeuvre noise</label><output id="o_trk_accel_noise"></output><input type="range" id="trk_accel_noise" data-trk="accel_noise" min="0.1" max="20" step="0.1"></div>
+        <div class="sl kf"><label for="trk_vel_noise_ms">Speed noise</label><output id="o_trk_vel_noise_ms"></output><input type="range" id="trk_vel_noise_ms" data-trk="vel_noise_ms" min="0.5" max="50" step="0.5"></div>
+      </div>
+      <label class="check kf"><input type="checkbox" id="trkVel"> Use reported speed, heading and climb rate</label>
+      <p class="fine"><b>Ease</b> blends each correction in over this long instead of jumping (0 jumps). With the Kalman filter, raise <b>position noise</b> to smooth more, lower it to follow each fix more closely. Raise <b>manoeuvre noise</b> if markers lag in turns. Lower <b>speed noise</b> to trust the aircraft's own speed and heading more.</p>
+      <button id="btnTrkReset" class="quiet">Restore defaults</button>
     </details>
 
     <details class="panel">
       <summary>Overlay</summary>
-      <div class="checks">
-        <label class="check"><input type="checkbox" data-ov="labels"> Labels</label>
-        <label class="check"><input type="checkbox" data-ov="trails"> Trails</label>
-        <label class="check"><input type="checkbox" data-ov="grid"> Sky grid</label>
-        <label class="check"><input type="checkbox" data-ov="offscreen"> Edge arrows</label>
-        <label class="check"><input type="checkbox" data-ov="points"> Calibration points</label>
-        <label class="check"><input type="checkbox" data-ov="hud"> Status line</label>
-        <label class="check"><input type="checkbox" data-ov="reticle"> Reticle</label>
-      </div>
       <label class="inline">Reticle shape
         <select id="reticleShape">
           <option value="circle">Circle</option>
@@ -136,15 +162,25 @@
         </select>
       </label>
       <div class="sliders">
-        <label>Reticle size <output id="o_reticleSize"></output>
-          <input type="range" id="reticleSize" min="0.3" max="4" step="0.1">
+        <div class="sl"><label for="reticleSize">Reticle size</label><output id="o_reticleSize"></output>
+          <input type="range" id="reticleSize" min="0.3" max="4" step="0.1"></div>
+        <div class="sl"><label for="pipZoom">Picture-in-picture zoom</label><output id="o_pipZoom"></output>
+          <input type="range" id="pipZoom" min="1.5" max="12" step="0.5"></div>
+      </div>
+      <div class="row gap pip-row">
+        <label class="inline">Insets
+          <select id="pipCount"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+        </label>
+        <label class="inline">Corner
+          <select id="pipCorner">
+            <option value="top-right">Top right</option><option value="top-left">Top left</option>
+            <option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option>
+          </select>
         </label>
       </div>
-      <label class="inline">Max range (km)<input id="maxRange" type="number" min="1" max="500" step="1"></label>
+      <p class="fine">Picture-in-picture shows the nearest aircraft in view magnified, cut from the full-resolution frame. It is hidden while a frame is frozen, so it never gets in the way of clicking.</p>
       <label class="check"><input type="checkbox" id="autodetect"> Add points automatically (experimental)</label>
       <p class="fine">Once calibrated to a few pixels, looks for aircraft near their predicted position and adds confirmed sightings.</p>
-      <label class="check"><input type="checkbox" id="autolog"> Auto-log frames when aircraft enter view</label>
-      <p class="fine">Saves frames from a few seconds either side of a track entering the field of view, to calibrate from later in Saved frames.</p>
     </details>
 
     <footer class="fine links">

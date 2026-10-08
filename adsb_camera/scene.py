@@ -32,16 +32,24 @@ def altitude_rgb(ft) -> tuple:
 
 def compute_scene(cam: CameraModel, frame, snapshot: dict, t: float,
                   max_range_km: float, stale_s: float, trail_s: float,
-                  with_trails: bool = True) -> list:
-    """Aircraft at frame time t (shifted by the camera's sync offset)."""
+                  with_trails: bool = True, estimate=None) -> list:
+    """Aircraft at frame time t (shifted by the camera's sync offset).
+
+    ``estimate(icao, fixes, t_world) -> ENU or None`` replaces the plain
+    interpolation (the live view passes its tracker's)."""
     t_world = t - cam.sync_offset_s
     out = []
     for icao, ac in snapshot.items():
         fixes = ac["fixes"]
-        p = interp_track(fixes, t_world, max_extrapolate_s=stale_s)
-        if p is None:
-            continue
-        enu = frame.enu(*p)
+        if estimate is not None:
+            enu = estimate(icao, fixes, t_world)
+            if enu is None:
+                continue
+        else:
+            p = interp_track(fixes, t_world, max_extrapolate_s=stale_s)
+            if p is None:
+                continue
+            enu = frame.enu(*p)
         az, el, rng = (float(x) for x in az_el_range(enu))
         if rng > max_range_km * 1000.0:
             continue
@@ -68,8 +76,9 @@ def compute_scene(cam: CameraModel, frame, snapshot: dict, t: float,
         if with_trails and entry["uv"] is not None:
             past = [x for x in fixes if t_world - trail_s <= x[T] <= t_world]
             if past:
-                arr = np.array([[x[LAT], x[LON], x[ALT]] for x in past] + [list(p)])
-                tuv, tvalid = cam.project_world(frame.enu(arr[:, 0], arr[:, 1], arr[:, 2]))
+                arr = np.array([[x[LAT], x[LON], x[ALT]] for x in past])
+                pts = np.vstack([frame.enu(arr[:, 0], arr[:, 1], arr[:, 2]), enu[None]])
+                tuv, tvalid = cam.project_world(pts)
                 entry["trail"] = [q.tolist() if ok else None for q, ok in zip(tuv, tvalid)]
         out.append(entry)
     out.sort(key=lambda a: a["range_km"])
